@@ -68,28 +68,6 @@
 </form>
 
 
-
-<script>
-function senden_ref() {
-    var url = "caldit://refresh_site?single=yes";
-    window.open(url, '_self');
-}
-</script>
-<script>
-function import_ics() {
-    var meineDatei = document.getElementById('meineDatei').value;
-    var url = "caldit://import_ics?" +
-              "meineDatei=" + encodeURIComponent(meineDatei);
-    window.open(url, '_self');
-}
-</script>
-<script>
-function export_ics() {
-    var url = "caldit://export_ics?all=backup";
-    window.open(url, '_self');
-}
-</script>
-
 <div class="calendar">
     <!-- Wochentagsköpfe -->
     <div class="header">Mo</div>
