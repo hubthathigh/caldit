@@ -1,7 +1,7 @@
 #!/usr/bin/python3
 # -*- coding: utf-8 -*-
 
-dbasepath = '/home/debian/synct/cnet/py/cal/'
+dbasepath = '/home/tab/tsync/cnet/py/cal/'
 verbose = 0 #3 all
 
 """
@@ -73,13 +73,19 @@ def check_termin_at_date(date):
         if result:
 
             for termin in result:
-                DTSTART = termin[0]
-                DTEND = termin[1]
+                DTSTART = termin[0][-4:]
+                DTEND = termin[1][-4:]
+                DTSTARTs = termin[0][4:]
+                if DTSTARTs.endswith('Z'):
+                    DTSTARTs = DTSTARTs[:-3]
+                DTENDs = termin[1][4:]
+                if DTENDs.endswith('Z'):
+                    DTENDs = DTENDs[:-3]
                 SUMMARY = termin[2][:15]
                 DESCRIPTION = termin[3][:30]
                 UID = termin[4]
 
-                string_to_insert += f"""<div class="night">  <a href="caldit://goto_termin?UID={UID}&DTSTART={DTSTART}&DTEND={DTEND}" onclick="setTimeout(function(){{ window.location.href='page2.html'; }}, 1000); return true;"><span style="color:#298920;">{DTSTART}</span> <span style="color:#DA243D;">{DTEND}</span> {SUMMARY} {DESCRIPTION}</a> </div>"""
+                string_to_insert += f"""<div class="night">  <a href="caldit://goto_termin?UID={UID}&DTSTART={DTSTART}&DTEND={DTEND}" onclick="setTimeout(function(){{ window.location.href='page2.html'; }}, 1000); return true;"><span style="color:#41A338;">{DTSTARTs}</span> <span style="color:#F67C30;">{DTENDs}</span> {SUMMARY} {DESCRIPTION}</a> </div>"""
 
             return(string_to_insert)
 
@@ -127,11 +133,9 @@ def create_single_site(UID, DTSTART, DTSTAMP=None, CREATED=None, LASTMODIFIED=No
 body {
     font-family: Arial, sans-serif;
     background-color: #696969;
-    margin: 0;
-    padding: 0px;
 }
 input[type="text"], select {
-    width: 100%;
+    width: 97%;
     padding: 8px;
     border: 1px solid #ddd;
     border-radius: 4px;
@@ -142,10 +146,10 @@ input[type="button"] {
     border-radius: 5px;
     cursor: pointer;
     font-size: 16px;
-    width: 100%;
+    width: 97%;
 }
 textarea {
-    height: 120px;
+    height: 110px;
 }
 .grid-container {
     display: grid;
@@ -176,6 +180,9 @@ background: #494949;
 color: #E8E8E8;
 border-color: #696969;
 }
+::placeholder {
+    color: #FACADE;
+}
 </style>
 </head>
 <body>
@@ -205,20 +212,20 @@ border-color: #696969;
 
   <div class="grid-container first-two-disc">
     <div class="description">DESCRIPTION</div>
-    <textarea id="DESCRIPTION" name="DESCRIPTION" placeholder="DESCRIPTION" value="{ DESCRIPTION if DESCRIPTION else '' }"></textarea>
+    <textarea id="DESCRIPTION" name="DESCRIPTION" placeholder="DESCRIPTION">{ DESCRIPTION if DESCRIPTION else '' }</textarea>
   </div>
 
   <div class="grid-container first-two-rows">
     <div class="description">LOCATION</div>
     <div class="description">GEO</div>
     <div class="description">URL</div>
-    <input type="text" id="LOCATION" name="LOCATION" placeholder="LOCATION" value="{ LOCATION if LOCATION else '' }">
-    <input type="text" id="GEO" name="GEO" placeholder="GEO" value="{ GEO if GEO else '' }">
+    <input type="text" id="LOCATION" name="LOCATION" placeholder="Panoramapunkt 2" value="{ LOCATION if LOCATION else '' }">
+    <input type="text" id="GEO" name="GEO" placeholder="29.9753;31.1376" value="{ GEO if GEO else '' }">
     <input type="text" id="URL" name="URL" placeholder="URL" value="{ URL if URL else '' }">
     <div class="description">ATTACH</div>
     <div class="description">UID</div>
     <div class="description">DTSTAMP</div>
-    <input type="text" id="ATTACH" name="ATTACH" placeholder="ATTACH" value="{ ATTACH if ATTACH else '' }">
+    <input type="text" id="ATTACH" name="ATTACH" placeholder="https://example.com/dokument.pdf" value="{ ATTACH if ATTACH else '' }">
     <input type="text" id="UID" name="UID" placeholder="UID" value="{ UID if UID else '' }">
     <input type="text" id="DTSTAMP" name="DTSTAMP" placeholder="DTSTAMP" value="{ DTSTAMP if DTSTAMP else '' }">
     <div class="description">CREATED</div>
@@ -226,13 +233,13 @@ border-color: #696969;
     <div class="description">VALARM</div>
     <input type="text" id="CREATED" name="CREATED" placeholder="CREATED" value="{ CREATED if CREATED else '' }">
     <input type="text" id="STATUS" name="STATUS" placeholder="STATUS" value="{ STATUS if STATUS else '' }">
-    <input type="text" id="VALARM" name="VALARM" placeholder="VALARM" value="{ VALARM if VALARM else '' }">
+    <input type="text" id="VALARM" name="VALARM" placeholder="&#123;&#39;TRIGGER&#39;: &#39;-PT15M&#39;, &#39;ACTION&#39;: &#39;DISPLAY&#39;, &#39;DESCRIPTION&#39;: &#39;Ring&#39;&#125;" value="{ VALARM if VALARM else '' }">
     <div class="description">RRULE</div>
     <div class="description">CLASS</div>
     <div class="description">TRANSP</div>
-    <input type="text" id="RRULE" name="RRULE" placeholder="RRULE" value="{ RRULE if RRULE else '' }">
+    <input type="text" id="RRULE" name="RRULE" placeholder="FREQ=WEEKLY;BYDAY=MO,FR" value="{ RRULE if RRULE else '' }">
     <input type="text" id="CLASS" name="CLASS" placeholder="CLASS" value="{ CLASS if CLASS else '' }">
-    <input type="text" id="TRANSP" name="TRANSP" placeholder="TRANSP" value="{ TRANSP if TRANSP else '' }">
+    <input type="text" id="TRANSP" name="TRANSP" placeholder="OPAQUE" value="{ TRANSP if TRANSP else '' }">
     <div class="description">PRIORITY</div>
     <div class="description">ATTACH2</div>
     <div class="description">TMP</div>
@@ -243,7 +250,7 @@ border-color: #696969;
   <div class="grid-container buttons">
     <input type="button" value="Update" onclick="senden(); setTimeout(function() {{ window.location.href='month.html'; }}, 1000); return true;">
     <input type="button" value="DELETE" onclick="if(confirm('Möchtest du fortfahren?')) senden_del_uid() ; setTimeout(function() {{ window.location.href='month.html'; }}, 1000); return true;">
-    <input type="button" value="Export" onclick="senden_ex(); setTimeout(function() {{ window.location.href='month.html'; }}, 5000); return true;">
+    <input type="button" value="Export" onclick="senden_ex(); setTimeout(function() {{ window.location.href='month.html'; }}, 4000); return true;">
     <input type="button" value="Back" onclick="senden_back(); setTimeout(function() {{ window.location.href='month.html'; }}, 1000); return true;">
   </div>
 </form>
@@ -256,16 +263,14 @@ function senden_back() {
     window.open(url, '_self');
 }
 </script>
-
 <script>
 function senden_ex() {
     var UID = document.getElementById('UID').value;
-    var url = "caldit://export_ics?single=yes&" +
+    var url = "caldit://export_ics?what=single&" +
               "UID=" + encodeURIComponent(UID);
     window.open(url, '_self');
 }
 </script>
-
 <script>
 function senden_del_uid() {
     var UID = document.getElementById('UID').value;
@@ -274,7 +279,6 @@ function senden_del_uid() {
     window.open(url, '_self');
 }
 </script>
-
 <script>
 function senden() {
     var UID = document.getElementById('UID').value;
@@ -339,16 +343,15 @@ function senden() {
         file.write(page2)
 
 # creates months.html codebody
-def eee1():
+def eee1(m, y):
 
-    scan_time_m = int(time.strftime("%m"))
-    scan_time_y = int(time.strftime("%Y"))
     scan_time_d = time.strftime("%d")
-    month = scan_time_m
-    year = scan_time_y
+    month = m
+    year = y
 
     current_utc_time = datetime.utcnow()
     formatted_utc_time = current_utc_time.strftime("%Y%m%dT%H%M%SZ")
+    string_formatted_utc_time = str(formatted_utc_time)
 
     cal = calendar.Calendar(firstweekday=0)  # Starte die Woche mit Montag
     first_day_weekday, days_in_month = calendar.monthrange(year, month)
@@ -360,7 +363,7 @@ def eee1():
     for week_num, week in enumerate(month_weeks):
         for day, weekday in week:
             day_class = "day"
-            UID = 'Unique' + str(formatted_utc_time)
+            UID = 'UID' + string_formatted_utc_time
 
             if day == 0:
                 if week_num == 0:  # Die erste Woche des Monats -> Tage gehören zum Vormonat
@@ -382,7 +385,7 @@ def eee1():
                     day_to_seach_termin = str(next_year) + str(next_month_2char) + str(next_day_2char)
                     termin = check_termin_at_date(day_to_seach_termin) if check_termin_at_date(day_to_seach_termin) is not None else ''
 
-                day_html =  f""" <div class={day_class}> <a href="caldit://entry_termin?UID={UID}&DTSTART={day_to_seach_termin}" onclick="setTimeout(function(){{ window.location.href='page2.html'; }}, 1000); return true;"><span style="color: #C45137;">{day} </span></a> {termin} </div>"""
+                day_html =  f""" <div class={day_class}> <a href="caldit://entry_termin?UID={UID}&DTSTART={day_to_seach_termin + "T001122Z"}&CREATED={day_to_seach_termin}&DTEND={day_to_seach_termin + "T223344Z"}" onclick="setTimeout(function(){{ window.location.href='page2.html'; }}, 1000); return true;"><span style="color: #C45137;">{day} </span></a> {termin} </div>"""
 
             else:
                 day_2char = "{:02.0f}".format(day)
@@ -391,19 +394,20 @@ def eee1():
                 termin = check_termin_at_date(day_to_seach_termin) if check_termin_at_date(day_to_seach_termin) is not None else ''
                 if day_2char == scan_time_d:
                     day_class = '"day" style="background: #696969;"'
-                    day_html = f""" <div class={day_class}> <a href="caldit://entry_termin?UID={UID}&DTSTART={day_to_seach_termin}" onclick="setTimeout(function(){{ window.location.href='page2.html'; }}, 1000); return true;"> {day} </a>{termin} </div>"""
+                    day_html = f""" <div class={day_class}> <a href="caldit://entry_termin?UID={UID}&DTSTART={day_to_seach_termin + "T001122Z"}&CREATED={string_formatted_utc_time}&DTEND={day_to_seach_termin + "T223344Z"}" onclick="setTimeout(function(){{ window.location.href='page2.html'; }}, 1000); return true;"> {day} </a>{termin} </div>"""
                 else:
-                    day_html = f""" <div class={day_class}> <a href="caldit://entry_termin?UID={UID}&DTSTART={day_to_seach_termin}" onclick="setTimeout(function(){{ window.location.href='page2.html'; }}, 1000); return true;"> {day} </a>{termin} </div>"""
+                    day_html = f""" <div class={day_class}> <a href="caldit://entry_termin?UID={UID}&DTSTART={day_to_seach_termin + "T001122Z"}&CREATED={string_formatted_utc_time}&DTEND={day_to_seach_termin + "T223344Z"}" onclick="setTimeout(function(){{ window.location.href='page2.html'; }}, 1000); return true;"> {day} </a>{termin} </div>"""
             html_days.append(day_html)
 
     # Alle Tage als String zusammen
     html_days_str = "\n".join(html_days)
     return html_days_str
 
-def create_month():
+def create_month(m, y):
+    monat = m
+    year = y
     if verbose > 2: logging.info("started : create_month ")
     head = """
-<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8">
@@ -425,39 +429,67 @@ def create_month():
     border: 1px solid #ddd;
     text-align: center;
     padding: 1px;
-    grid-row: span 3; /* Jeder Tag spannt über 2 Zeilen */
+    grid-row: span 3;
     border-color: #696969;
 }
 .night {
     border: 1px solid #ddd;
     text-align: left;
     padding: 1px;
-    grid-row: span 3; /* Jeder Tag spannt über 2 Zeilen */
+    grid-row: span 3;
     border-color: #696969;
 }
 a {
   text-decoration: none;
 }
-
 *{
-background: #494949; /* Dunkelgrauer Hintergrund */
-color: #E8E8E8; /* Hellgraue Schrift */
-border-color: #696969; /* Setze hier die gewünschte Rahmenfarbe */
+background: #494949;
+color: #E8E8E8;
+border-color: #696969;
 }
+input[type="text"], select {
+    border: 1px solid #696969;
+}
+input[type="button"] {
+    background-color: #3D3D3D;
+    cursor: pointer;
+    font-size: 16px;
+}
+.lineone {
+    display: grid;
+    grid-template-columns: repeat(9, 1fr);
+    margin: 1px;
 </style>
 </head>
-
 <body>
-<form id="meinFormular2">
-<h1 style="display: inline;"> %s </h1> <input type="text" id="meineDatei" name="meineDatei" value="/home/debian/fullpath.ics"> 
+
+<form id="meinFormular2" class="lineone">
+<input type="button" value="&larr;" onclick="senden_ref('go_left'); setTimeout(function() { window.location.href='month.html'; }, 1000); return true;">
+<input type="text" id="datum" name="datum" value="%s" style="text-align: center; font-size: 18px;">
+<input type="button" value="Refresh" onclick="senden_ref('no'); setTimeout(function() { window.location.href='month.html'; }, 1000); return true;">
+<input type="text" id="meineDatei" name="meineDatei" value="/home/debian/fullp.ics"> 
 <input type="button" value="Import" onclick="import_ics(); setTimeout(function() { window.location.href='month.html'; }, 1000); return true;"> 
-<input type="button" value="Export" onclick="export_ics(); setTimeout(function() { window.location.href='month.html'; }, 1000); return true;"> 
-<input type="button" value="Refresh" onclick="senden_ref(); setTimeout(function() { window.location.href='month.html'; }, 1000); return true;">
+<input type="text" id="optins_ex_cat" name="optins_ex_cat" value="CATEGORIES:birthday"> 
+<input type="button" value="Export filter" onclick="export_ics('cat'); setTimeout(function() { window.location.href='month.html'; }, 1000); return true;">
+<input type="button" value="Export All" onclick="export_ics('all'); setTimeout(function() { window.location.href='month.html'; }, 4000); return true;"> 
+<input type="button" value="&rarr;" onclick="senden_ref('go_right'); setTimeout(function() { window.location.href='month.html'; }, 1000); return true;">
 </form>
 
 <script>
-function senden_ref() {
-    var url = "caldit://refresh_site?single=yes";
+function senden_ref(input) {
+    var datum = document.getElementById('datum').value;
+    var url = "caldit://refresh_site?" +
+              "datum=" + encodeURIComponent(datum) +
+              "&go=" + encodeURIComponent(input);
+    window.open(url, '_self');
+}
+</script>
+<script>
+function export_ics(input) {
+    var optins_ex_cat = document.getElementById('optins_ex_cat').value;
+    var url = "caldit://export_ics?" +
+              "optins_ex_cat=" + encodeURIComponent(optins_ex_cat) +
+              "&what=" + encodeURIComponent(input);
     window.open(url, '_self');
 }
 </script>
@@ -466,12 +498,6 @@ function import_ics() {
     var meineDatei = document.getElementById('meineDatei').value;
     var url = "caldit://import_ics?" +
               "meineDatei=" + encodeURIComponent(meineDatei);
-    window.open(url, '_self');
-}
-</script>
-<script>
-function export_ics() {
-    var url = "caldit://export_ics?all=backup";
     window.open(url, '_self');
 }
 </script>
@@ -485,8 +511,8 @@ function export_ics() {
     <div class="header">Fr</div>
     <div class="header">Sa</div>
     <div class="header">So</div>
-""" % (scan_time)
-    body_insert = eee1()
+""" % (str(monat) + '.' + str(year))
+    body_insert = eee1(monat, year)
     tail = """
 
 </div>
@@ -570,15 +596,25 @@ def read_and_insert_ics_file(ics_file_path):
 
         insert_termin(**current_termin, TMP=TMP)
 
-def export_to_ics_file(single, UID):
-    if single == 'yes':
+def export_to_ics_file(mode, UID=None):
+    if mode == 'single':
         file_path = f"{dbasepath}backup{UID}{scan_time}.ics"
-    else:
+    if mode == 'all':
         file_path = f"{dbasepath}backup{scan_time}.ics"
+    if mode != 'all' and mode != 'single':
+        file_path = f"{dbasepath}backupfiltered{scan_time}.ics"
+        try:
+            split_mode = mode.split(':')
+            first_arg = split_mode[0]
+            second_arg = split_mode[1]
+        except (IndexError):
+            first_arg = mode
+            second_arg = '*'
+
     with open(file_path, 'w') as file:
         head = """BEGIN:VCALENDAR
 VERSION:2.0
-PRODID:-//This is Sparta
+PRODID:-//This is Sparta//Caldit//DE
 
 CALSCALE:GREGORIAN
 METHOD:PUBLISH
@@ -609,10 +645,12 @@ END:VTIMEZONE
             if 'TMP' in available_columns:
                 available_columns.remove('TMP')
 
-            if single == "yes":
+            if mode == "single":
                 cur.execute(f'SELECT * FROM termine where UID="{UID}"')
-            else:
+            if mode == "all":
                 cur.execute(f'SELECT * FROM termine')
+            if mode != 'all' and mode != 'single':
+                cur.execute(f'SELECT * FROM termine where {first_arg}="{second_arg}"')
             result = cur.fetchall()
 
             if result:
@@ -692,56 +730,78 @@ def start():
         for key, value in params.items():
             param_dict[key] = value
 
+        for key in param_dict:
+            param_dict[key] = unquote(param_dict[key])
+
         UID = param_dict.get('UID', '19841201')
-        day_to_enter = param_dict.get('DTSTART', '19841201')
+
+        m = int(time.strftime("%m"))
+        y = int(time.strftime("%Y"))
+
+        if verbose > 1: logging.info(f"started params dic = {param_dict}")
 
         if base == 'caldit://goto_termin':
             single_termin_dic = single_termin_as_dic(UID)
-            if verbose > 2: logging.info(f"single_termin_dic {single_termin_dic}")
             create_single_site(**single_termin_dic)
 
         elif base == 'caldit://entry_termin':
-            create_single_site(UID, day_to_enter)
+            created = param_dict.get('CREATED', None)
+            dtend = param_dict.get('DTEND', None)
+            dtstart = param_dict.get('DTSTART', '19841201')
+            create_single_site(UID, DTSTART=dtstart, CREATED=created, DTEND=dtend)
 
         elif base == 'caldit://save_termin':
             insert_termin(**param_dict)
-            create_month()
+            create_month(m, y)
 
         elif base == 'caldit://delete_termin':
-            if verbose > 2: logging.info("delete_termin started")
-            decoded = unquote(UID)
-            delete_termin(decoded)
-            create_month()
+            delete_termin(UID)
+            create_month(m, y)
 
         elif base == 'caldit://import_ics':
-            if verbose > 2: logging.info("import_ics started")
             day_to_enter_uid = param_dict['meineDatei']
-            decoded = unquote(day_to_enter_uid)
-            read_and_insert_ics_file(decoded)
+            read_and_insert_ics_file(day_to_enter_uid)
             if verbose > 2: logging.info(day_to_enter_uid)
 
         elif base == 'caldit://export_ics':
-            if verbose > 2: logging.info("export_ics started")
-            single = param_dict.get('single', '19841201')
-            if single == "yes":
-                export_to_ics_file('yes', UID)
-            else:
-                export_to_ics_file('all', UID)
+            optins_ex_cat = param_dict.get('optins_ex_cat', 'UID:*')
+            what = param_dict.get('what', 'all')
+
+            if what == "single":
+                export_to_ics_file('single', UID)
+            elif what == "cat":
+                export_to_ics_file(optins_ex_cat)
+            elif what == "all":
+                export_to_ics_file("all")
 
         elif base == 'caldit://create':
             if verbose > 2: logging.info("create_month started")
-            create_month()
+            create_month(m, y)
 
         elif base == 'caldit://refresh_site':
-            if verbose > 2: logging.info("refresh_site started")
-            create_month()
+            go = param_dict.get('go', 'no')
+            month_too_refresh = param_dict.get('datum', '11.2024')
+            m = int(month_too_refresh.split('.')[0])
+            y = int(month_too_refresh.split('.')[1])
+
+            if go == 'go_left':
+                m = m - 1
+                if m < 1:
+                    m = 12
+                    y = y - 1
+
+            elif go == 'go_right':
+                m = m + 1
+                if m > 12:
+                    m = 1
+                    y = y + 1
+
+            create_month(m, y)
     else:
-        create_month()
         if verbose > 2: logging.info("else : create_month started")
+        create_month(1,2024)
 
 start()
-
-
 
 #BEGIN:VCALENDAR
 #VERSION:2.0
