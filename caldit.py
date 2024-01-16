@@ -4,7 +4,17 @@
 dbasepath = '/home/tab/tsync/cnet/py/cal/'
 verbose = 0 #3 all
 
+cat_farbcodes = {
+    "day_top": "#E8E8E8", # number on top
+    "events": "#FF484F",
+    "home": "#00FF00",
+    "logs": "#0D2053",
+    "birthday": "#FFD700",
+    "urgent": "#200202"
+}
+
 """
+standalone script does not run in background, no server
 to connect html with python script, over mime support
 sudo nano /usr/share/mime/packages/caldit-mime.xml
 <?xml version="1.0" encoding="UTF-8"?>
@@ -27,7 +37,7 @@ sudo update-mime-database /usr/share/mime
 xdg-mime default caldit.desktop application/x-caldit
 xdg-mime query default application/x-caldit
 xdg-open "caldit://create?single=yes"
-open 'months.html', push export button(longest wait), accept. same page2.html
+open 'months.html' in browser, push export button(longest wait), accept popup. same page2.html
 """
 
 import sys
@@ -38,9 +48,9 @@ import calendar
 import ast
 from urllib.parse import unquote
 import logging
+from dateutil.rrule import rrulestr
 
-scan_time = time.strftime("%d.%m.%Y_%H:%M")
-
+scan_time = time.strftime("%d%m%Y%H%M%S")
 con = sqlite3.connect('{}ical.db'.format(dbasepath))
 
 logging.basicConfig(level=logging.INFO, filename=f"{dbasepath}cal.log", filemode='a')
@@ -50,77 +60,267 @@ def erstelle_table_termine():
     with con:
         cur = con.cursor()
         cur.execute("CREATE TABLE IF NOT EXISTS termine (" 
-                    "UID TEXT, DTSTAMP TEXT, CREATED TEXT, LASTMODIFIED TEXT, "
-                    "DTSTART TEXT, DTEND TEXT, SUMMARY TEXT, DESCRIPTION TEXT, "
+                    "UID TEXT, DTSTAMP TEXT, CREATED TEXT, LASTMODIFIED TEXT, DTSTARTZID TEXT,"
+                    "DTSTART TEXT, DTENDZID TEXT, DTEND TEXT, SUMMARY TEXT, DESCRIPTION TEXT, "
                     "LOCATION TEXT, GEO TEXT, ORGANIZER TEXT, ATTENDEE TEXT, "
-                    "URL TEXT, STATUS TEXT, VALARM TEXT, RRULE TEXT, CLASS TEXT, "
+                    "URL TEXT, STATUS TEXT, VALARM TEXT, RRULE TEXT, RRULEND TEXT, RRULEXTRA TEXT, CLASS TEXT, "
                     "TRANSP TEXT, PRIORITY INTEGER, CATEGORIES TEXT, ATTACH BLOB, "
                     "ATTACH2 BLOB, TMP TEXT, UNIQUE (UID));")
 erstelle_table_termine()
 
+# needed 4 many
+def parse_datetime(DTSTART):
+    try:
+        return datetime.strptime(DTSTART, "%Y%m%dT%H%M%SZ")
+    except ValueError:
+        try:
+            return datetime.strptime(DTSTART, "%Y%m%dT%H%M%S")
+        except ValueError:
+            try:
+                return datetime.strptime(DTSTART, "%Y%m%d")
+            except ValueError:
+                if verbose > 1: logging.info(f" parse_datetime DTSTART {DTSTART} ")
+                return None
+
+# needed 4 check_termin_at_date
+def format_zulutime(DTSTART, DTEND):
+    month_s = day_s = hour_s = minute_s = ''
+    month_e = day_e = hour_e = minute_e = ''
+
+    dtstart_datetime = parse_datetime(DTSTART)
+    dtend_datetime = parse_datetime(DTEND)
+
+    if dtstart_datetime is None or dtend_datetime is None:
+        return 0
+    else:
+        year_s = f"{dtstart_datetime.year}"
+        month_s = f"{dtstart_datetime.month:02d}"
+        day_s = f"{dtstart_datetime.day:02d}"
+        hour_s = f"{dtstart_datetime.hour:02d}"
+        minute_s = f"{dtstart_datetime.minute:02d}"
+
+        year_e = f"{dtend_datetime.year}"
+        month_e = f"{dtend_datetime.month:02d}"
+        day_e = f"{dtend_datetime.day:02d}"
+        hour_e = f"{dtend_datetime.hour:02d}"
+        minute_e = f"{dtend_datetime.minute:02d}"
+
+        return month_s, day_s, hour_s, minute_s, month_e, day_e, hour_e, minute_e, year_s, year_e, dtstart_datetime, dtend_datetime
+
+# needed 4 check_termin_at_date
+def insert_rr_freq_termins(y, m, d):
+    with con:
+        string_to_insert = ''
+        cur = con.cursor()
+        cur.execute(f'SELECT UID, DIC_TERMIN, DTSTART FROM RRULET WHERE YEAR="{y}";')
+        result1 = cur.fetchall()
+        if result1:
+            for entry in result1:
+                string_to_dic = entry[1]
+                DTSTARTRR = entry[2]
+                if f'datetime.datetime({y}, {m}, {d}, ' in string_to_dic:
+                    cur = con.cursor()
+                    cur.execute(f'SELECT UID, DTSTART, DTEND, CATEGORIES, SUMMARY, DESCRIPTION FROM termine WHERE UID="{entry[0]}";')
+                    result = cur.fetchone()
+                    if result:
+
+                        time_objekts_frag = format_zulutime(result[1], result[2])
+                        UID = result[0]
+                        DTSTART = time_objekts_frag[2] + ':' + time_objekts_frag[3]
+                        DTEND = time_objekts_frag[6] + ':' + time_objekts_frag[7]
+                        CATEGORIES = result[3]
+                        SUMMARY = result[4]
+                        DESCRIPTION = result[5]
+
+                        if result[1] == result[2]:
+                            DTSTART = 'Today'
+                            DTEND = ''
+
+                        if f"{y:4d}{m:02d}{d:02d}" not in DTSTARTRR:
+
+                            if CATEGORIES in cat_farbcodes:
+                                farbecode = cat_farbcodes[CATEGORIES]
+                            else:
+                                farbecode = cat_farbcodes['day_top']
+
+                            string_to_insert += f"""<div class="night">  <a href="caldit://goto_termin?UID={UID}" onclick="setTimeout(function(){{ window.location.href='page2.html'; }}, 1000); return true;"><span style="color:#41A338;">{DTSTART}</span>-<span style="color:#F67C30;">{DTEND}</span><span style="color:{farbecode};"> {SUMMARY} {DESCRIPTION} </span></a></div>"""
+
+        return string_to_insert
+
+multi_day_dic = {}
+def between():
+    string_to_insert = ''
+
+    if len(multi_day_dic) > 0:
+
+        with con:
+            # get copy
+            uids_to_process = list(multi_day_dic.keys())
+            keys_to_delete = []
+            for uidd in uids_to_process:
+                multi_day_dic[uidd] -= 1
+                farbecode = '#E8E8E8'
+                cur = con.cursor()
+                cur.execute(f'SELECT SUMMARY, DESCRIPTION, CATEGORIES FROM termine WHERE UID="{uidd}";')
+                termin2 = cur.fetchall()
+                if termin2:
+                    SUMMARY = termin2[0][0]
+                    DESCRIPTION = termin2[0][1]
+                    cat = termin2[0][2]
+
+                    if cat in cat_farbcodes:
+                        farbecode = cat_farbcodes[cat]
+
+                    string_to_insert += f"""<div class="night">  <a href="caldit://goto_termin?UID={uidd}" onclick="setTimeout(function(){{ window.location.href='page2.html'; }}, 1000); return true;"><span style="color:{farbecode};"> < {SUMMARY} {DESCRIPTION} > </span></a></div>"""
+
+                    if multi_day_dic[uidd] <= 0:
+                        keys_to_delete.append(uidd)
+
+            # del after iter
+            for uidd in keys_to_delete:
+                del multi_day_dic[uidd]
+    first_check = 0
+    return string_to_insert
+
 def check_termin_at_date(date):
     string_to_insert = ''
+    farbecode = '#E8E8E8'
+    DTSTART = ''
+    DTEND = ''
+    SUMMARY = ''
+    DESCRIPTION = ''
+    UID = ''
+
+    string_to_insert += between()
+
+    y = int(date[:4])
+    m = int(date[4:6])
+    d = int(date[6:])
+    string_to_insert += insert_rr_freq_termins(y, m, d)
+
     with con:
-        DTSTART = ''
-        DTEND = ''
-        SUMMARY = ''
-        DESCRIPTION = ''
-        UID = ''
         cur = con.cursor()
-        cur.execute(f'SELECT DTSTART, DTEND, SUMMARY, DESCRIPTION, UID FROM termine WHERE DTSTART LIKE "%{date}%" OR DTEND LIKE "%{date}%"')
+        cur.execute(f"""
+        SELECT * FROM (
+            SELECT
+                DTSTART,
+                DTEND,
+                SUMMARY,
+                DESCRIPTION,
+                UID,
+                CATEGORIES,
+                CASE
+                    WHEN DTSTART LIKE "%{date}%" AND DTEND LIKE "%{date}%" THEN 'sameday'
+                    WHEN DTSTART LIKE "%{date}%" AND DTEND NOT LIKE "%{date}%" THEN 'startonday'
+                    WHEN DTEND LIKE "%{date}%" AND DTSTART NOT LIKE "%{date}%" THEN 'endonday'
+                END AS DateStatus
+            FROM
+                termine
+        ) AS subquery
+        WHERE DateStatus IS NOT NULL ORDER BY DTSTART ASC;
+        """)
 
         result=cur.fetchall()
         if result:
-
             for termin in result:
-                DTSTART = termin[0][-4:]
-                DTEND = termin[1][-4:]
-                DTSTARTs = termin[0][4:]
-                if DTSTARTs.endswith('Z'):
-                    DTSTARTs = DTSTARTs[:-3]
-                DTENDs = termin[1][4:]
-                if DTENDs.endswith('Z'):
-                    DTENDs = DTENDs[:-3]
-                SUMMARY = termin[2][:15]
+                DTSTART = termin[0]
+                DTEND = termin[1]
+                SUMMARY = termin[2][:25]
                 DESCRIPTION = termin[3][:30]
                 UID = termin[4]
+                cat = termin[5]
+                status_day = termin[6]
 
-                string_to_insert += f"""<div class="night">  <a href="caldit://goto_termin?UID={UID}&DTSTART={DTSTART}&DTEND={DTEND}" onclick="setTimeout(function(){{ window.location.href='page2.html'; }}, 1000); return true;"><span style="color:#41A338;">{DTSTARTs}</span> <span style="color:#F67C30;">{DTENDs}</span> {SUMMARY} {DESCRIPTION}</a> </div>"""
+                if cat in cat_farbcodes:
+                    farbecode = cat_farbcodes[cat]
 
-            return(string_to_insert)
+                if DTSTART == DTEND:
+                    DTSTART = 'Today'
+                    DTEND = ''
 
-def insert_termin(UID, DTSTART, DTSTAMP=None, CREATED=None, LASTMODIFIED=None,
-         DTEND=None, SUMMARY=None, DESCRIPTION=None, LOCATION=None, GEO=None,
+                elif status_day == 'sameday':
+                    frag_zulu = format_zulutime(DTSTART, DTEND)
+                    if frag_zulu:
+                        DTSTART = frag_zulu[2] + ':' + frag_zulu[3]
+                        DTEND = frag_zulu[6] + ':' + frag_zulu[7]
+
+                elif status_day == 'startonday':
+                    frag_zulu = format_zulutime(DTSTART, DTEND)
+                    if frag_zulu:
+                        start_time = frag_zulu[10]
+                        end_time = frag_zulu[11]
+                        difference =  end_time - start_time
+                        multi_day_dic[UID] = difference.days - 1
+
+                        DTSTART = frag_zulu[2] + ':' + frag_zulu[3]
+                        DTEND = frag_zulu[5] + '.' + frag_zulu[4] + ' ' + frag_zulu[6] + ':' + frag_zulu[7]
+
+                elif status_day == 'endonday':
+                    frag_zulu = format_zulutime(DTSTART, DTEND)
+                    if frag_zulu:
+                        DTSTART = frag_zulu[1] + '.' + frag_zulu[0] + ' ' + frag_zulu[2] + ':' + frag_zulu[3]
+                        DTEND = frag_zulu[6] + ':' + frag_zulu[7]
+
+                string_to_insert += f"""<div class="night">  <a href="caldit://goto_termin?UID={UID}" onclick="setTimeout(function(){{ window.location.href='page2.html'; }}, 1000); return true;"><span style="color:#41A338;">{DTSTART}</span>-<span style="color:#F67C30;">{DTEND}</span><span style="color:{farbecode};"> {SUMMARY} {DESCRIPTION} </span></a></div>"""
+
+        return(string_to_insert)
+#check_termin_at_date('20240110')
+
+def insert_termin(UID, DTSTAMP=None, CREATED=None, LASTMODIFIED=None, DTSTARTZID=None, DTSTART=None,
+         DTENDZID=None, DTEND=None, SUMMARY=None, DESCRIPTION=None, LOCATION=None, GEO=None,
          ORGANIZER=None, ATTENDEE=None, URL=None, STATUS=None, VALARM=None,
-         RRULE=None, CLASS=None, TRANSP=None, PRIORITY=None, CATEGORIES=None,
+         RRULE=None, RRULEND=None, RRULEXTRA=None, CLASS=None, TRANSP=None, PRIORITY=None, CATEGORIES=None,
          ATTACH=None, ATTACH2=None, TMP=None):
     with con:
         cur = con.cursor()
         insert_into_table = (
             '"{}", "{}", "{}", "{}", "{}", "{}", "{}", "{}", "{}", "{}", '
             '"{}", "{}", "{}", "{}", "{}", "{}", "{}", "{}", "{}", "{}", '
-            '"{}", "{}", "{}"'.format(
-                UID, DTSTAMP, CREATED, LASTMODIFIED, DTSTART, DTEND, SUMMARY,
+            '"{}", "{}", "{}", "{}", "{}", "{}", "{}"'.format(
+                UID, DTSTAMP, CREATED, LASTMODIFIED, DTSTARTZID, DTSTART,
+                DTENDZID, DTEND, SUMMARY,
                 DESCRIPTION, LOCATION, GEO, ORGANIZER, ATTENDEE, URL, STATUS,
-                VALARM, RRULE, CLASS, TRANSP, PRIORITY, CATEGORIES, ATTACH,
+                VALARM, RRULE, RRULEND, RRULEXTRA, CLASS, TRANSP, PRIORITY, CATEGORIES, ATTACH,
                 ATTACH2, TMP
             )
         )
 
         sql_prompt = (
             "INSERT OR REPLACE INTO termine ("
-            "UID, DTSTAMP, CREATED, LASTMODIFIED, DTSTART, DTEND, SUMMARY, DESCRIPTION, "
-            "LOCATION, GEO, ORGANIZER, ATTENDEE, URL, STATUS, VALARM, RRULE, CLASS, "
+            "UID, DTSTAMP, CREATED, LASTMODIFIED, DTSTARTZID, DTSTART, DTENDZID, DTEND, SUMMARY, DESCRIPTION, "
+            "LOCATION, GEO, ORGANIZER, ATTENDEE, URL, STATUS, VALARM, RRULE, RRULEND, RRULEXTRA, CLASS, "
             "TRANSP, PRIORITY, CATEGORIES, ATTACH, ATTACH2, TMP"
             ") VALUES ({});".format(insert_into_table)
         )
 
         cur.execute(sql_prompt)
 
-def create_single_site(UID, DTSTART, DTSTAMP=None, CREATED=None, LASTMODIFIED=None,
-         DTEND=None, SUMMARY=None, DESCRIPTION=None, LOCATION=None, GEO=None,
+def sql_dump():
+
+    cur = con.cursor()
+    cur.execute("SELECT * FROM termine ORDER BY DTSTART ASC")
+    rows = cur.fetchall()
+    html = """
+    <table>
+    """
+
+    columns = [description[0] for description in cur.description]
+    html += "<tr>" + "".join(f"<th>{column}</th>" for column in columns) + "</tr>"
+    for row in rows:
+        uid = row[0]
+        html += "<tr>"
+#        html += f"<td><input type='button' value='Insert' onclick='senden(); setTimeout(function() {{ window.location.href=\"month.html\"; }}, 1000);'></td>"
+        html += f"""<td> <a href="caldit://goto_termin?UID={uid}" onclick="setTimeout(function(){{ window.location.href='page2.html'; }}, 1000); return true;">{uid}</a></td>"""
+        html += "".join(f"<td>{cell}</td>" for cell in row[1:])  # Rest der Zellen
+        html += "</tr>"
+    html += "</table>"
+    con.close()
+    return html
+
+def create_single_site(UID, DTSTAMP=None, CREATED=None, LASTMODIFIED=None, DTSTARTZID=None, DTSTART=None,
+         DTENDZID=None, DTEND=None, SUMMARY=None, DESCRIPTION=None, LOCATION=None, GEO=None,
          ORGANIZER=None, ATTENDEE=None, URL=None, STATUS=None, VALARM=None,
-         RRULE=None, CLASS=None, TRANSP=None, PRIORITY=None, CATEGORIES=None,
+         RRULE=None, RRULEND=None, RRULEXTRA=None, CLASS=None, TRANSP=None, PRIORITY=None, CATEGORIES=None,
          ATTACH=None, ATTACH2=None, TMP=None):
     head = """
 <!DOCTYPE html>
@@ -183,13 +383,28 @@ border-color: #696969;
 ::placeholder {
     color: #FACADE;
 }
+table {
+    border-collapse: collapse;
+    font-family: monospace;
+    width: 100%;
+}
+th, td {
+    border: 1px solid #ddd;
+    padding: 2px;
+    border-color: #696969;
+}
+th {
+    padding-top: 2px;
+    padding-bottom: 2px;
+    text-align: left;
+    background-color: #696969;
+}
 </style>
 </head>
-<body>
 """
     body = f"""
+<body>
 <form id="meinFormular">
-
   <div class="grid-container first-two-rows">
     <div class="description">LASTMODIFIED</div>
     <div class="description">CATEGORIES</div>
@@ -203,13 +418,18 @@ border-color: #696969;
     <input type="text" id="DTSTART" name="DTSTART" placeholder="DTSTART" value="{ DTSTART if DTSTART else '' }">
     <input type="text" id="DTEND" name="DTEND" placeholder="DTEND" value="{ DTEND if DTEND else '' }">
     <input type="text" id="ATTENDEE" name="ATTENDEE" placeholder="ATTENDEE" value="{ ATTENDEE if ATTENDEE else '' }">
+    <div class="description">DTSTARTZID</div>
+    <div class="description">DTENDZID</div>
+    <div class="description">ATTACH</div>
+    <input type="text" id="DTSTARTZID" name="DTSTARTZID" placeholder="Europe/Paris  VALUE=DATE:20240101  VALUE=DATE-TIME:20240101T090000" value="{ DTSTARTZID if DTSTARTZID else 'Europe/Paris' }">
+    <input type="text" id="DTENDZID" name="DTENDZID" placeholder="Europe/Paris  VALUE=DATE:20240101  VALUE=DATE-TIME:20240101T090000" value="{ DTENDZID if DTENDZID else 'Europe/Paris' }">
+    <input type="text" id="ATTACH" name="ATTACH" placeholder="https://example.com/dokument.pdf" value="{ ATTACH if ATTACH else '' }">
   </div>
 
   <div class="grid-container next-two-a">
     <div class="description">SUMMARY</div>
     <input type="text" id="SUMMARY" name="SUMMARY" placeholder="SUMMARY" value="{ SUMMARY if SUMMARY else '' }">
   </div>
-
   <div class="grid-container first-two-disc">
     <div class="description">DESCRIPTION</div>
     <textarea id="DESCRIPTION" name="DESCRIPTION" placeholder="DESCRIPTION">{ DESCRIPTION if DESCRIPTION else '' }</textarea>
@@ -222,41 +442,44 @@ border-color: #696969;
     <input type="text" id="LOCATION" name="LOCATION" placeholder="Panoramapunkt 2" value="{ LOCATION if LOCATION else '' }">
     <input type="text" id="GEO" name="GEO" placeholder="29.9753;31.1376" value="{ GEO if GEO else '' }">
     <input type="text" id="URL" name="URL" placeholder="URL" value="{ URL if URL else '' }">
-    <div class="description">ATTACH</div>
     <div class="description">UID</div>
-    <div class="description">DTSTAMP</div>
-    <input type="text" id="ATTACH" name="ATTACH" placeholder="https://example.com/dokument.pdf" value="{ ATTACH if ATTACH else '' }">
-    <input type="text" id="UID" name="UID" placeholder="UID" value="{ UID if UID else '' }">
-    <input type="text" id="DTSTAMP" name="DTSTAMP" placeholder="DTSTAMP" value="{ DTSTAMP if DTSTAMP else '' }">
     <div class="description">CREATED</div>
+    <div class="description">DTSTAMP</div>
+    <input type="text" id="UID" name="UID" placeholder="UID" value="{ UID if UID else '' }">
+    <input type="text" id="CREATED" name="CREATED" placeholder="CREATED" value="{ CREATED if CREATED else '' }">
+    <input type="text" id="DTSTAMP" name="DTSTAMP" placeholder="DTSTAMP" value="{ DTSTAMP if DTSTAMP else '' }">
+    <div class="description">PRIORITY</div>
     <div class="description">STATUS</div>
     <div class="description">VALARM</div>
-    <input type="text" id="CREATED" name="CREATED" placeholder="CREATED" value="{ CREATED if CREATED else '' }">
+    <input type="text" id="PRIORITY" name="PRIORITY" placeholder="PRIORITY" value="{ PRIORITY if PRIORITY else '' }">
     <input type="text" id="STATUS" name="STATUS" placeholder="STATUS" value="{ STATUS if STATUS else '' }">
     <input type="text" id="VALARM" name="VALARM" placeholder="&#123;&#39;TRIGGER&#39;: &#39;-PT15M&#39;, &#39;ACTION&#39;: &#39;DISPLAY&#39;, &#39;DESCRIPTION&#39;: &#39;Ring&#39;&#125;" value="{ VALARM if VALARM else '' }">
     <div class="description">RRULE</div>
+    <div class="description">RRULEND</div>
+    <div class="description">RRULEXTRA</div>
+    <input type="text" id="RRULE" name="RRULE" placeholder="FREQ=DAILY WEEKLY YEARLY MINUTELY HOURLY" value="{ RRULE if RRULE else '' }">
+    <input type="text" id="RRULEND" name="RRULEND" placeholder="UNTIL=19971224T000000 INTERVAL=2 ;COUNT=10" value="{ RRULEND if RRULEND else '' }">
+    <input type="text" id="RRULEXTRA" name="RRULEXTRA" placeholder="WKST=SU; BYDAY=TU,TH BYMONTHDAY=2,15 BYMONTH=6,7 BYHOUR=9,10,11,12," value="{ RRULEXTRA if RRULEXTRA else '' }">
     <div class="description">CLASS</div>
     <div class="description">TRANSP</div>
-    <input type="text" id="RRULE" name="RRULE" placeholder="FREQ=WEEKLY;BYDAY=MO,FR" value="{ RRULE if RRULE else '' }">
+    <div class="description">ATTACH2</div>
     <input type="text" id="CLASS" name="CLASS" placeholder="CLASS" value="{ CLASS if CLASS else '' }">
     <input type="text" id="TRANSP" name="TRANSP" placeholder="OPAQUE" value="{ TRANSP if TRANSP else '' }">
-    <div class="description">PRIORITY</div>
-    <div class="description">ATTACH2</div>
-    <div class="description">TMP</div>
-    <input type="text" id="PRIORITY" name="PRIORITY" placeholder="PRIORITY" value="{ PRIORITY if PRIORITY else '' }">
     <input type="text" id="ATTACH2" name="ATTACH2" placeholder="ATTACH2" value="{ ATTACH2 if ATTACH2 else '' }">
+    <div class="description">TMP</div>
     <input type="text" id="TMP" name="TMP" placeholder="TMP" value="{ TMP if TMP else '' }">
   </div>
   <div class="grid-container buttons">
-    <input type="button" value="Update" onclick="senden(); setTimeout(function() {{ window.location.href='month.html'; }}, 1000); return true;">
+    <input type="button" value="Insert" onclick="senden(); setTimeout(function() {{ window.location.href='month.html'; }}, 1000); return true;">
     <input type="button" value="DELETE" onclick="if(confirm('Möchtest du fortfahren?')) senden_del_uid() ; setTimeout(function() {{ window.location.href='month.html'; }}, 1000); return true;">
     <input type="button" value="Export" onclick="senden_ex(); setTimeout(function() {{ window.location.href='month.html'; }}, 4000); return true;">
     <input type="button" value="Back" onclick="senden_back(); setTimeout(function() {{ window.location.href='month.html'; }}, 1000); return true;">
   </div>
 </form>
-
 """
+    sql_dump_html = sql_dump()
     script = """
+
 <script>
 function senden_back() {
     var url = "caldit://create?single=yes&";
@@ -285,7 +508,9 @@ function senden() {
     var DTSTAMP = document.getElementById('DTSTAMP').value;
     var CREATED = document.getElementById('CREATED').value;
     var LASTMODIFIED = document.getElementById('LASTMODIFIED').value;
+    var DTSTARTZID = document.getElementById('DTSTARTZID').value;
     var DTSTART = document.getElementById('DTSTART').value;
+    var DTENDZID = document.getElementById('DTENDZID').value;
     var DTEND = document.getElementById('DTEND').value;
     var SUMMARY = document.getElementById('SUMMARY').value;
     var DESCRIPTION = document.getElementById('DESCRIPTION').value;
@@ -297,6 +522,8 @@ function senden() {
     var STATUS = document.getElementById('STATUS').value;
     var VALARM = document.getElementById('VALARM').value;
     var RRULE = document.getElementById('RRULE').value;
+    var RRULEND = document.getElementById('RRULEND').value;
+    var RRULEXTRA = document.getElementById('RRULEXTRA').value;
     var CLASS = document.getElementById('CLASS').value;
     var TRANSP = document.getElementById('TRANSP').value;
     var PRIORITY = document.getElementById('PRIORITY').value;
@@ -310,7 +537,9 @@ function senden() {
               "&DTSTAMP=" + encodeURIComponent(DTSTAMP) +
               "&CREATED=" + encodeURIComponent(CREATED) +
               "&LASTMODIFIED=" + encodeURIComponent(LASTMODIFIED) +
+              "&DTSTARTZID=" + encodeURIComponent(DTSTARTZID) +
               "&DTSTART=" + encodeURIComponent(DTSTART) +
+              "&DTENDZID=" + encodeURIComponent(DTENDZID) +
               "&DTEND=" + encodeURIComponent(DTEND) +
               "&SUMMARY=" + encodeURIComponent(SUMMARY) +
               "&DESCRIPTION=" + encodeURIComponent(DESCRIPTION) +
@@ -322,6 +551,8 @@ function senden() {
               "&STATUS=" + encodeURIComponent(STATUS) +
               "&VALARM=" + encodeURIComponent(VALARM) +
               "&RRULE=" + encodeURIComponent(RRULE) +
+              "&RRULEND=" + encodeURIComponent(RRULEND) +
+              "&RRULEXTRA=" + encodeURIComponent(RRULEXTRA) +
               "&CLASS=" + encodeURIComponent(CLASS) +
               "&TRANSP=" + encodeURIComponent(TRANSP) +
               "&PRIORITY=" + encodeURIComponent(PRIORITY) +
@@ -339,79 +570,175 @@ function senden() {
 """
     file_path = dbasepath + 'page2.html'
     with open(file_path, 'w') as file:
-        page2 = head + body + script
+        page2 = head + body + sql_dump_html + script
         file.write(page2)
 
-# creates months.html codebody
-def eee1(m, y):
+# needed 4 rr_freq, create_body
+def calc_month_range(year, month):
+    first_day = datetime(year, month, 1)
+    first_day_weekday = first_day.weekday()
+    last_day = first_day.replace(day=calendar.monthrange(year, month)[1])
+    last_day_weekday = last_day.weekday()
+    scan_von = first_day - timedelta(days=first_day_weekday)
+    days_in_next_month = 6 - last_day_weekday
+    scan_bis = last_day + timedelta(days=days_in_next_month)
+    return scan_von, scan_bis
 
-    scan_time_d = time.strftime("%d")
-    month = m
-    year = y
+# gather RRULE Dates for the year
+def rr_freq(m, y):
+    MONTH = m
+    YEAR = y
+    with con:
+        cur = con.cursor()
+        cur.execute("CREATE TABLE IF NOT EXISTS RRULET (UID TEXT, MONTH TEXT, YEAR TEXT, DIC_TERMIN TEXT, RRULE TEXT, DTSTART TEXT, UNIQUE (UID, YEAR));")
+        cur.execute(f'SELECT UID FROM RRULET WHERE YEAR="{y}";')
+        result1 = cur.fetchall()
+        uids_in_result1 = {uid[0] for uid in result1}
 
-    current_utc_time = datetime.utcnow()
-    formatted_utc_time = current_utc_time.strftime("%Y%m%dT%H%M%SZ")
-    string_formatted_utc_time = str(formatted_utc_time)
+        cur = con.cursor()
+        cur.execute(f'SELECT UID, DTSTART, RRULE, RRULEND, RRULEXTRA, CATEGORIES FROM termine WHERE RRULE IS NOT NULL AND RRULE != "" AND RRULE != "None";')
+        result = cur.fetchall()
+        if result:
+            datum_1_jan = datetime(y, 1, 1)
+            datum_31_dez = datetime(y, 12, 31)
+            for termin in result:
+                if termin[0] not in uids_in_result1:
+                    try:
+                        DIC_TERMIN = {}
+                        UID = termin[0] 
+                        DTSTARTR = termin[1]
+                        ics_rule = "RRULE:" + termin[2] 
+                        RRULEND = termin[3]
+                        RRULEXTRA = termin[4]
+                        UNTIL = ''
+                        date_obj_start = parse_datetime(DTSTARTR)
+                        if date_obj_start < datum_31_dez:
+                            if RRULEND not in ["None", "", None]:
+                                ics_rule += ';' + RRULEND
+                            if RRULEXTRA not in ["None", "", None]:
+                                ics_rule +=  ';' + RRULEXTRA
 
-    cal = calendar.Calendar(firstweekday=0)  # Starte die Woche mit Montag
-    first_day_weekday, days_in_month = calendar.monthrange(year, month)
-    month_weeks = list(cal.monthdays2calendar(year, month))
+#                    ics_rule = "RRULE:FREQ=DAILY;UNTIL=20240207T223344"   mahmmal Z mit  datetime(2024, 1, 4, tzinfo=timezone.utc)
+                            has_until = 'UNTIL=' in ics_rule
+                            if has_until:
+                                parts = ics_rule.split('UNTIL=')
+                                UNTIL = parts[1]
+                                temp = ''
+                                if len(parts) > 2:
+                                    UNTIL = parts[1].split(';')[0]
+                                    temp  = parts[2]
+                                if UNTIL.endswith('Z'):
+                                    UNTIL = UNTIL[:-1]
 
+                                ics_rule = parts[0] + 'UNTIL=' + UNTIL + temp
+
+                                rrule_obj = rrulestr(ics_rule, dtstart=date_obj_start)
+                                all_occurrences = list(rrule_obj)
+                                if all_occurrences:
+                                    if all_occurrences[-1] > datum_1_jan:
+                                        for occ in all_occurrences:
+                                            if UID not in DIC_TERMIN:
+                                                DIC_TERMIN[UID] = []
+                                            DIC_TERMIN[UID].append(occ)
+
+                                            if occ > datum_31_dez:
+                                                break
+                                    else:
+                                        DIC_TERMIN[UID] = ['no']
+                            rrule_obj = rrulestr(ics_rule, dtstart=date_obj_start)
+
+                            has_count = 'COUNT=' in ics_rule
+                            if has_count:
+                                all_occurrences = list(rrule_obj)
+                                if all_occurrences:
+                                    for occ in all_occurrences:
+                                        if UID not in DIC_TERMIN:
+                                            DIC_TERMIN[UID] = []
+                                        DIC_TERMIN[UID].append(occ)
+
+                            # forever
+                            if not has_count and not has_until:
+                                occurrences = list(rrule_obj)
+                                for occ in occurrences:
+                                    if datum_1_jan <= occ <= datum_31_dez:
+                                        if UID not in DIC_TERMIN:
+                                            DIC_TERMIN[UID] = []
+                                        DIC_TERMIN[UID].append(occ)
+                                    else:
+                                        if occ > datum_31_dez:
+                                            break
+
+                            if len(DIC_TERMIN.get(UID, [])) == 0:
+                                DIC_TERMIN[UID] = ['no']
+
+                            cur = con.cursor()
+                            insert_into_table = (
+                                '"{}", "{}", "{}", "{}", "{}", "{}"'.format(
+                                    UID, MONTH, YEAR, DIC_TERMIN, ics_rule, DTSTARTR
+                                )
+                            )
+                            sql_prompt = (
+                                "INSERT OR REPLACE INTO RRULET ("
+                                "UID,  MONTH, YEAR, DIC_TERMIN, RRULE, DTSTART"
+                                ") VALUES ({});".format(insert_into_table)
+                            )
+                            cur.execute(sql_prompt)
+
+                        else:
+                            DIC_TERMIN[UID] = ['no']
+
+                            cur = con.cursor()
+                            insert_into_table = (
+                                '"{}", "{}", "{}", "{}", "{}", "{}"'.format(
+                                    UID, MONTH, YEAR, DIC_TERMIN, ics_rule, DTSTARTR
+                                )
+                            )
+                            sql_prompt = (
+                                "INSERT OR REPLACE INTO RRULET ("
+                                "UID,  MONTH, YEAR, DIC_TERMIN, RRULE, DTSTART"
+                                ") VALUES ({});".format(insert_into_table)
+                            )
+                            cur.execute(sql_prompt)
+
+                    except Exception as e:
+                        if verbose > 1: logging.info(f" rr_freq  except Exception as e: {e} " )
+
+        else:
+            return 0
+
+def create_body(m, y):
+    scan_von, scan_bis = calc_month_range(y, m)
+    scan_room = [scan_von + timedelta(days=i) for i in range((scan_bis - scan_von).days + 1)]
     html_days = []
-    day_of_next_month = 1
-    termin = ''
-    for week_num, week in enumerate(month_weeks):
-        for day, weekday in week:
-            day_class = "day"
-            UID = 'UID' + string_formatted_utc_time
+    UID = 'UIDcalldit' + scan_time
+    for day in scan_room:
+        day_t = day.day
 
-            if day == 0:
-                if week_num == 0:  # Die erste Woche des Monats -> Tage gehören zum Vormonat
-                    prev_month = month - 1 if month > 1 else 12
-                    prev_month_2char = "{:02.0f}".format(prev_month)
-                    prev_year = year if month > 1 else year - 1
-                    days_in_prev_month = calendar.monthrange(prev_year, prev_month)[1]
-                    day = days_in_prev_month - (first_day_weekday - weekday - 1)
-                    prev_day_2char = "{:02.0f}".format(day)
-                    day_to_seach_termin = str(prev_year) + str(prev_month_2char) + str(prev_day_2char)
-                    termin = check_termin_at_date(day_to_seach_termin) if check_termin_at_date(day_to_seach_termin) is not None else ''
-                elif week_num == len(month_weeks) - 1:  # Die letzte Woche des Monats -> Tage gehören zum nächsten Monat
-                    day = day_of_next_month
-                    next_day_2char = "{:02.0f}".format(day)
-                    day_of_next_month += 1
-                    next_month = month + 1
-                    next_month_2char = "{:02.0f}".format(next_month)
-                    next_year = year if month < 11 else year + 1
-                    day_to_seach_termin = str(next_year) + str(next_month_2char) + str(next_day_2char)
-                    termin = check_termin_at_date(day_to_seach_termin) if check_termin_at_date(day_to_seach_termin) is not None else ''
+        day_YYYYMMDD = day.strftime('%Y%m%d')
+        UID = 'UIDcalldit' + scan_time
+        termin = check_termin_at_date(day_YYYYMMDD)
 
-                day_html =  f""" <div class={day_class}> <a href="caldit://entry_termin?UID={UID}&DTSTART={day_to_seach_termin + "T001122Z"}&CREATED={day_to_seach_termin}&DTEND={day_to_seach_termin + "T223344Z"}" onclick="setTimeout(function(){{ window.location.href='page2.html'; }}, 1000); return true;"><span style="color: #C45137;">{day} </span></a> {termin} </div>"""
+        farbcode = '#E8E8E8'
+        if day.month != m:
+            farbcode = '#C45137'
 
-            else:
-                day_2char = "{:02.0f}".format(day)
-                month_2char = "{:02.0f}".format(month)
-                day_to_seach_termin = str(year) + str(month_2char) + str(day_2char)
-                termin = check_termin_at_date(day_to_seach_termin) if check_termin_at_date(day_to_seach_termin) is not None else ''
-                if day_2char == scan_time_d:
-                    day_class = '"day" style="background: #696969;"'
-                    day_html = f""" <div class={day_class}> <a href="caldit://entry_termin?UID={UID}&DTSTART={day_to_seach_termin + "T001122Z"}&CREATED={string_formatted_utc_time}&DTEND={day_to_seach_termin + "T223344Z"}" onclick="setTimeout(function(){{ window.location.href='page2.html'; }}, 1000); return true;"> {day} </a>{termin} </div>"""
-                else:
-                    day_html = f""" <div class={day_class}> <a href="caldit://entry_termin?UID={UID}&DTSTART={day_to_seach_termin + "T001122Z"}&CREATED={string_formatted_utc_time}&DTEND={day_to_seach_termin + "T223344Z"}" onclick="setTimeout(function(){{ window.location.href='page2.html'; }}, 1000); return true;"> {day} </a>{termin} </div>"""
-            html_days.append(day_html)
+        day_html =  f""" <div class=day> <a href="caldit://entry_termin?UID={UID}&DTSTART={day_YYYYMMDD + "T001122"}&CREATED={day_YYYYMMDD}&DTEND={day_YYYYMMDD + "T223344"}" onclick="setTimeout(function(){{ window.location.href='page2.html'; }}, 1000); return true;"><span style="color: {farbcode};">{day_t} </span></a> {termin} </div>"""
 
-    # Alle Tage als String zusammen
+        html_days.append(day_html)
+
     html_days_str = "\n".join(html_days)
     return html_days_str
 
 def create_month(m, y):
     monat = m
     year = y
-    if verbose > 2: logging.info("started : create_month ")
     head = """
+<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
+<link rel="icon" href="data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='32' height='32'><rect x='3' y='3' width='28' height='28' fill='none' stroke='grey' stroke-width='3' rx='2' ry='2' /><circle cx='11' cy='7' r='4' fill='none' stroke='grey' stroke-width='2' /><circle cx='23' cy='7' r='4' fill='none' stroke='grey' stroke-width='2' /><line x1='4' y1='12' x2='31' y2='12' stroke='grey' stroke-width='3' /><path d='M 20 11 A 5 5 0 0 0 18 27' fill='none' stroke='grey' stroke-width='4' /><line x1='4' y1='27' x2='31' y2='27' stroke='grey' stroke-width='2' /></svg>">
 <title>Monat</title>
 <style>
 .calendar {
@@ -449,16 +776,19 @@ border-color: #696969;
 }
 input[type="text"], select {
     border: 1px solid #696969;
+    min-width: 30px;
 }
 input[type="button"] {
     background-color: #3D3D3D;
     cursor: pointer;
     font-size: 16px;
+    min-width: 30px;
 }
 .lineone {
     display: grid;
     grid-template-columns: repeat(9, 1fr);
     margin: 1px;
+}
 </style>
 </head>
 <body>
@@ -512,7 +842,8 @@ function import_ics() {
     <div class="header">Sa</div>
     <div class="header">So</div>
 """ % (str(monat) + '.' + str(year))
-    body_insert = eee1(monat, year)
+#    body_insert = eee1(monat, year)
+    body_insert = create_body(monat, year)
     tail = """
 
 </div>
@@ -553,7 +884,7 @@ def read_cal_file(file_path):
                 inside_valarm = False
             elif current_event is not None:
                 key_val = line.split(':', 1)
-                if len(key_val) == 2:
+                if len(key_val) >= 2:
                     if inside_valarm:
                         valarm_info[key_val[0]] = key_val[1]
                     else:
@@ -561,10 +892,9 @@ def read_cal_file(file_path):
     return termine
 
 def read_and_insert_ics_file(ics_file_path):
-    valid_entries = ["UID", "DTSTART", "DTSTAMP", "CREATED", "LASTMODIFIED", "DTEND", "SUMMARY", "DESCRIPTION", "LOCATION", "GEO", "ORGANIZER", "ATTENDEE", "URL", "STATUS", "VALARM", "RRULE", "CLASS", "TRANSP", "PRIORITY", "CATEGORIES", "ATTACH", "ATTACH2"]
+    valid_entries = ["UID", "DTSTAMP", "CREATED", "LASTMODIFIED", "DTSTARTZID", "DTSTART", "DTENDZID", "DTEND", "SUMMARY", "DESCRIPTION", "LOCATION", "GEO", "ORGANIZER", "ATTENDEE", "URL", "STATUS", "VALARM", "RRULE", "RRULEND", "RRULEXTRA", "CLASS", "TRANSP", "PRIORITY", "CATEGORIES", "ATTACH", "ATTACH2"]
 
     termine = read_cal_file(ics_file_path)
-
     for termin in termine:
         current_termin = {}
         TMP = []
@@ -574,6 +904,39 @@ def read_and_insert_ics_file(ics_file_path):
         for key, value in termin.items():
             if key == 'LAST-MODIFIED':
                 current_termin['LASTMODIFIED'] = value
+
+            elif key.startswith('DTSTART;'):
+                _, tzid = key.split(';', 1)
+                current_termin['DTSTARTZID'] = tzid
+                current_termin['DTSTART'] = value
+
+
+            elif key == 'DTSTART':
+                current_termin['DTSTART'] = value
+                current_termin['DTSTARTZID'] = None
+
+            elif key.startswith('DTEND;'):
+                _, tzid = key.split(';', 1)
+                current_termin['DTENDZID'] = tzid
+                current_termin['DTEND'] = value
+
+            elif key == 'DTEND':
+                current_termin['DTEND'] = value
+                current_termin['DTENDZID'] = None
+
+            elif key == 'RRULE':
+                parts = value.split(';', 2)
+
+                while len(parts) < 3:
+                    parts.append('')
+                for item in parts:
+                    if item.startswith('FREQ='):
+                        current_termin['RRULE'] = item
+                    if item.startswith('UNTIL=') or item.startswith('COUNT') or item.startswith('INTERVAL'):
+                        current_termin['RRULEND'] = item
+                    if item.startswith('BY') or item.startswith('WKST'):
+                        current_termin['RRULEXTRA'] = item
+
             elif key == 'BEGIN' and value == 'VALARM':
                 inside_valarm = True
             elif key == 'END' and value == 'VALARM':
@@ -697,6 +1060,7 @@ def single_termin_as_dic(UID):
             if value is not None and value != ''and value != 'None':
                 result_dict[column_name] = value
 
+        if verbose > 1: logging.info(f"single_termin_as_dic erfolgreich .result_dict  {result_dict}.")
         return result_dict
 
 def delete_termin(termin_uid):
@@ -704,8 +1068,12 @@ def delete_termin(termin_uid):
         cur = con.cursor()
         sql = f'DELETE FROM termine WHERE UID ="{termin_uid}"'
         cur.execute(sql)
-        con.commit()
-        if verbose > 2: logging.info("delete_termin erfolgreich ..")
+        try:
+            cur = con.cursor()
+            sql = f'DELETE FROM RRULET WHERE UID ="{termin_uid}"'
+            cur.execute(sql)
+        except:
+            con.commit()
 
 def parse_custom_url(url):
     parts = url.split('?')
@@ -728,17 +1096,14 @@ def start():
         base, params = parse_custom_url(url)
         param_dict = {}
         for key, value in params.items():
-            param_dict[key] = value
-
-        for key in param_dict:
-            param_dict[key] = unquote(param_dict[key])
+            param_dict[key] = unquote(value)
 
         UID = param_dict.get('UID', '19841201')
 
         m = int(time.strftime("%m"))
         y = int(time.strftime("%Y"))
 
-        if verbose > 1: logging.info(f"started params dic = {param_dict}")
+        if verbose > 0: logging.info(f"started params dic = {param_dict}")
 
         if base == 'caldit://goto_termin':
             single_termin_dic = single_termin_as_dic(UID)
@@ -752,6 +1117,9 @@ def start():
 
         elif base == 'caldit://save_termin':
             insert_termin(**param_dict)
+            created = param_dict.get('CREATED', '20240606')
+            y = int(created[:4])
+            m = int(created[4:6])
             create_month(m, y)
 
         elif base == 'caldit://delete_termin':
@@ -759,9 +1127,9 @@ def start():
             create_month(m, y)
 
         elif base == 'caldit://import_ics':
-            day_to_enter_uid = param_dict['meineDatei']
-            read_and_insert_ics_file(day_to_enter_uid)
-            if verbose > 2: logging.info(day_to_enter_uid)
+            import_path = param_dict['meineDatei']
+            read_and_insert_ics_file(import_path)
+            if verbose > 2: logging.info(f" import_path {import_path} ")
 
         elif base == 'caldit://export_ics':
             optins_ex_cat = param_dict.get('optins_ex_cat', 'UID:*')
@@ -796,7 +1164,9 @@ def start():
                     m = 1
                     y = y + 1
 
+            rr_freq(m, y)
             create_month(m, y)
+            if verbose > 2: logging.info(f" caldit://refresh_site': create_month m {m} y {y}  ende  ")
     else:
         if verbose > 2: logging.info("else : create_month started")
         create_month(1,2024)
@@ -822,7 +1192,7 @@ start()
 #STATUS:CONFIRMED
 #    VALARM: Eine Erinnerung, die 15 Minuten vor dem Ereignis ausgelöst wird.               BEGIN:VALARM TRIGGER:-PT15M ACTION:DISPLAY DESCRIPTION:Erinnerung an das wöchentliche Meeting END:VALARM
 #    RRULE: Regel für die Wiederholung des Ereignisses (hier jeden Montag und Freitag).     RRULE:FREQ=WEEKLY;BYDAY=MO,FR
-#    CLASS PUBLIC: Das Ereignis ist öffentlich PRIVATE CONFIDENTIAL: Ähnlich wie PRIVATE    CLASS:PRIVATE  
+#    CLASS PUBLIC: Das Ereignis ist öffentlich PRIVATE CONFIDENTIAL: Ähnlich wie PRIVATE    CLASS:PRIVATE
 #    TRANSP: als beschäftigt (OPAQUE) oder verfügbar (TRANSPARENT)                          TRANSP:OPAQUE
 #    PRIORITY: Die Priorität auf einer Skala von 0 (undefiniert) bis 9 (höchste Priorität)  PRIORITY:2
 #    CATEGORIES: Kategorien, die dem Ereignis zugeordnet sind.                              CATEGORIES:Besprechung, Wichtig
