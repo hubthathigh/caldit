@@ -17,7 +17,7 @@ I primarily use it for my Raspberry Pi, which records actions for me. With a boo
 
 Install on Debian 12 :
 
-"""
+```
 to connect html with python script, over mime support
 sudo nano /usr/share/mime/packages/caldit-mime.xml
 <?xml version="1.0" encoding="UTF-8"?>
@@ -41,8 +41,9 @@ xdg-mime default caldit.desktop application/x-caldit
 xdg-mime query default application/x-caldit
 xdg-open "caldit://create?single=yes"
 open 'months.html' in browser, push export button(longest wait), accept popup. same page2.html
-"""
+```
 
+            
 
 
 
