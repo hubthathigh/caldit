@@ -1,8 +1,15 @@
 #!/usr/bin/python3
 # -*- coding: utf-8 -*-
 
-dbasepath = '/home/tab/tsync/cnet/py/cal/'
+dbasepath = ''
+import os # needed 4 dbasepath and parse_custom_url() cut windows path
+if os.name == 'nt':
+    dbasepath = 'C:\\Users\\ds\\cnet\\py\\cal\\'
+else:
+    dbasepath = '/home/debian/synct/cnet/py/cal/'
+
 verbose = 0 #3 all
+local_time_zone = "Europe/Paris"
 
 cat_farbcodes = {
     "day_top": "#E8E8E8", # number on top
@@ -14,8 +21,10 @@ cat_farbcodes = {
 }
 
 """
-standalone script does not run in background, no server
+req : pip install python-dateutil  for RRULE.
 to connect html with python script, over mime support
+
+Debian 12:
 sudo nano /usr/share/mime/packages/caldit-mime.xml
 <?xml version="1.0" encoding="UTF-8"?>
 <mime-info xmlns="http://www.freedesktop.org/standards/shared-mime-info">
@@ -28,7 +37,7 @@ sudo nano /usr/share/applications/caldit.desktop
 [Desktop Entry]
 Type=Application
 Name=Caldit
-Exec=/usr/bin/python3 /home/tab/tsync/cnet/py/cal/caldit.py %U
+Exec=/usr/bin/python3 /home/debian/synct/cnet/py/cal/caldit.py %U
 Icon=weather-clear
 Categories=WebBrowser;
 MimeType=x-scheme-handler/caldit;
@@ -38,20 +47,40 @@ xdg-mime default caldit.desktop application/x-caldit
 xdg-mime query default application/x-caldit
 xdg-open "caldit://create?single=yes"
 open 'months.html' in browser, push export button(longest wait), accept popup. same page2.html
+
+Windows:
+where python
+pip install tzdata
+caldit.reg content
+Windows Registry Editor Version 5.00
+[HKEY_CLASSES_ROOT\caldit]
+@="URL:caldit Protocol"
+"URL Protocol"=""
+[HKEY_CLASSES_ROOT\caldit\shell]
+[HKEY_CLASSES_ROOT\caldit\shell\open]
+[HKEY_CLASSES_ROOT\caldit\shell\open\command]
+@="\"C:\\Users\\ds\\AppData\\Local\\Programs\\Python\\Python311\\python.exe\" \"C:\\Users\\ds\\cnet\\py\\cal\\caldit.py\" \"%1\""
+create caldit.reg, edit paths(python and script), doubleclick, accept.
+python caldit.py
+open 'months.html' in browser, push export button(longest wait), accept popup. same page2.html
 """
 
 import sys
 import time
 import sqlite3
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 import calendar
 import ast
 from urllib.parse import unquote
 import logging
 from dateutil.rrule import rrulestr
+from zoneinfo import ZoneInfo, available_timezones
+import re
 
 scan_time = time.strftime("%d%m%Y%H%M%S")
 con = sqlite3.connect('{}ical.db'.format(dbasepath))
+all_termins = {}
+multi_day_dic = {}
 
 logging.basicConfig(level=logging.INFO, filename=f"{dbasepath}cal.log", filemode='a')
 if verbose > 1: logging.info(f"{dbasepath}cal.log started {scan_time}")
@@ -61,51 +90,39 @@ def erstelle_table_termine():
         cur = con.cursor()
         cur.execute("CREATE TABLE IF NOT EXISTS termine (" 
                     "UID TEXT, DTSTAMP TEXT, CREATED TEXT, LASTMODIFIED TEXT, DTSTARTZID TEXT,"
-                    "DTSTART TEXT, DTENDZID TEXT, DTEND TEXT, SUMMARY TEXT, DESCRIPTION TEXT, "
+                    "DTSTART TEXT, DTEND TEXT, SUMMARY TEXT, DESCRIPTION TEXT, "
                     "LOCATION TEXT, GEO TEXT, ORGANIZER TEXT, ATTENDEE TEXT, "
                     "URL TEXT, STATUS TEXT, VALARM TEXT, RRULE TEXT, RRULEND TEXT, RRULEXTRA TEXT, CLASS TEXT, "
                     "TRANSP TEXT, PRIORITY INTEGER, CATEGORIES TEXT, ATTACH BLOB, "
                     "ATTACH2 BLOB, TMP TEXT, UNIQUE (UID));")
 erstelle_table_termine()
 
-# needed 4 many
-def parse_datetime(DTSTART):
+def parse_datetime(time_str, DTSTARTZID):
     try:
-        return datetime.strptime(DTSTART, "%Y%m%dT%H%M%SZ")
-    except ValueError:
-        try:
-            return datetime.strptime(DTSTART, "%Y%m%dT%H%M%S")
-        except ValueError:
-            try:
-                return datetime.strptime(DTSTART, "%Y%m%d")
-            except ValueError:
-                if verbose > 1: logging.info(f" parse_datetime DTSTART {DTSTART} ")
-                return None
-
-# needed 4 check_termin_at_date
-def format_zulutime(DTSTART, DTEND):
-    month_s = day_s = hour_s = minute_s = ''
-    month_e = day_e = hour_e = minute_e = ''
-
-    dtstart_datetime = parse_datetime(DTSTART)
-    dtend_datetime = parse_datetime(DTEND)
-
-    if dtstart_datetime is None or dtend_datetime is None:
-        return 0
-    else:
-        year_s = f"{dtstart_datetime.year}"
-        month_s = f"{dtstart_datetime.month:02d}"
-        day_s = f"{dtstart_datetime.day:02d}"
-        hour_s = f"{dtstart_datetime.hour:02d}"
-        minute_s = f"{dtstart_datetime.minute:02d}"
-
-        year_e = f"{dtend_datetime.year}"
-        month_e = f"{dtend_datetime.month:02d}"
-        day_e = f"{dtend_datetime.day:02d}"
-        hour_e = f"{dtend_datetime.hour:02d}"
-        minute_e = f"{dtend_datetime.minute:02d}"
-
-        return month_s, day_s, hour_s, minute_s, month_e, day_e, hour_e, minute_e, year_s, year_e, dtstart_datetime, dtend_datetime
+        pattern = r'(\d{4})(?:[-/]?)(\d{2})(?:[-/]?)(\d{2})(?:(?:[ T])?(\d{2})(?::?(\d{2}))?(?::?(\d{2}))?)?(?:Z)?'
+        match = re.search(pattern, time_str)
+        if match:
+                year, month, day, hour, minute, second = match.groups()
+                year, month, day = map(int, [year, month, day])
+                hour = int(hour) if hour is not None else 0
+                minute = int(minute) if minute is not None else 0
+                second = int(second) if second is not None else 0
+                if time_str.endswith('Z'):
+                    dt = datetime(year, month, day, hour, minute, second, tzinfo=ZoneInfo("UTC"))
+                    local_time = dt.astimezone(ZoneInfo(local_time_zone))
+                    return local_time
+                elif DTSTARTZID in available_timezones():
+                    dt = datetime(year, month, day, hour, minute, second, tzinfo=ZoneInfo(DTSTARTZID))
+                    local_time = dt.astimezone(ZoneInfo(local_time_zone))
+                    return local_time
+                else:
+                    local_time = datetime(year, month, day, hour, minute, second, tzinfo=ZoneInfo(local_time_zone))
+                    return local_time
+        else:
+            return None
+    except Exception as e:
+        if verbose > 1: logging.info(f" parse_datetime  except Exception as e: {e} " )
+        return None
 
 # needed 4 check_termin_at_date
 def insert_rr_freq_termins(y, m, d):
@@ -120,67 +137,68 @@ def insert_rr_freq_termins(y, m, d):
                 DTSTARTRR = entry[2]
                 if f'datetime.datetime({y}, {m}, {d}, ' in string_to_dic:
                     cur = con.cursor()
-                    cur.execute(f'SELECT UID, DTSTART, DTEND, CATEGORIES, SUMMARY, DESCRIPTION FROM termine WHERE UID="{entry[0]}";')
+                    cur.execute(f'SELECT UID, DTSTART, DTEND, CATEGORIES, SUMMARY, DESCRIPTION, DTSTARTZID FROM termine WHERE UID="{entry[0]}";')
                     result = cur.fetchone()
                     if result:
 
-                        time_objekts_frag = format_zulutime(result[1], result[2])
                         UID = result[0]
-                        DTSTART = time_objekts_frag[2] + ':' + time_objekts_frag[3]
-                        DTEND = time_objekts_frag[6] + ':' + time_objekts_frag[7]
                         CATEGORIES = result[3]
                         SUMMARY = result[4]
                         DESCRIPTION = result[5]
-
-                        if result[1] == result[2]:
-                            DTSTART = 'Today'
-                            DTEND = ''
+                        status_day = 'RR'
+                        DTSTARTZID = result[6]
 
                         if f"{y:4d}{m:02d}{d:02d}" not in DTSTARTRR:
-
                             if CATEGORIES in cat_farbcodes:
                                 farbecode = cat_farbcodes[CATEGORIES]
                             else:
                                 farbecode = cat_farbcodes['day_top']
 
-                            string_to_insert += f"""<div class="night">  <a href="caldit://goto_termin?UID={UID}" onclick="setTimeout(function(){{ window.location.href='page2.html'; }}, 1000); return true;"><span style="color:#41A338;">{DTSTART}</span>-<span style="color:#F67C30;">{DTEND}</span><span style="color:{farbecode};"> {SUMMARY} {DESCRIPTION} </span></a></div>"""
+                            date = "{:04d}{:02d}{:02d}".format(y, m, d)
+                            if date not in all_termins:
+                                all_termins[date] = []
+                            DTSTARTs = parse_datetime(result[1], DTSTARTZID)
+                            dt_rr_start = DTSTARTs.replace(year=y, month=m, day=d)
+                            DTENDs = parse_datetime(result[2], DTSTARTZID)
+                            dt_rr_end = DTENDs.replace(year=y, month=m, day=d)
+                            all_termins[date].append([UID, dt_rr_start, dt_rr_end, SUMMARY, DESCRIPTION, CATEGORIES, status_day, date])
 
-        return string_to_insert
-
-multi_day_dic = {}
-def between():
+def between(date, y, m, d):
     string_to_insert = ''
-
     if len(multi_day_dic) > 0:
-
         with con:
             # get copy
             uids_to_process = list(multi_day_dic.keys())
             keys_to_delete = []
             for uidd in uids_to_process:
                 multi_day_dic[uidd] -= 1
-                farbecode = '#E8E8E8'
                 cur = con.cursor()
-                cur.execute(f'SELECT SUMMARY, DESCRIPTION, CATEGORIES FROM termine WHERE UID="{uidd}";')
+                cur.execute(f'SELECT SUMMARY, DESCRIPTION, CATEGORIES, DTSTART, DTEND, DTSTARTZID FROM termine WHERE UID="{uidd}";')
                 termin2 = cur.fetchall()
                 if termin2:
                     SUMMARY = termin2[0][0]
                     DESCRIPTION = termin2[0][1]
                     cat = termin2[0][2]
+                    status_day = 'between'
+                    DTSTART = termin2[0][3]
+                    DTEND = termin2[0][4]
+                    DTSTARTZID = termin2[0][5]
 
-                    if cat in cat_farbcodes:
-                        farbecode = cat_farbcodes[cat]
+                    if date not in all_termins:
+                        all_termins[date] = []
 
-                    string_to_insert += f"""<div class="night">  <a href="caldit://goto_termin?UID={uidd}" onclick="setTimeout(function(){{ window.location.href='page2.html'; }}, 1000); return true;"><span style="color:{farbecode};"> < {SUMMARY} {DESCRIPTION} > </span></a></div>"""
+                    DTSTARTs = parse_datetime(DTSTART, DTSTARTZID)
+                    dt_rr_start = DTSTARTs.replace(year=y, month=m, day=d, hour=0, minute=0, second=0)
+                    DTENDs = parse_datetime(DTEND, DTSTARTZID)
+                    dt_rr_end = DTENDs.replace(year=y, month=m, day=d, hour=0, minute=0, second=0)
+
+                    all_termins[date].append([uidd, dt_rr_start, dt_rr_end, SUMMARY, DESCRIPTION, cat, status_day, date])
 
                     if multi_day_dic[uidd] <= 0:
                         keys_to_delete.append(uidd)
-
             # del after iter
             for uidd in keys_to_delete:
                 del multi_day_dic[uidd]
-    first_check = 0
-    return string_to_insert
 
 def check_termin_at_date(date):
     string_to_insert = ''
@@ -191,12 +209,12 @@ def check_termin_at_date(date):
     DESCRIPTION = ''
     UID = ''
 
-    string_to_insert += between()
-
     y = int(date[:4])
     m = int(date[4:6])
     d = int(date[6:])
-    string_to_insert += insert_rr_freq_termins(y, m, d)
+
+    between(date, y, m, d)
+    insert_rr_freq_termins(y, m, d)
 
     with con:
         cur = con.cursor()
@@ -209,6 +227,7 @@ def check_termin_at_date(date):
                 DESCRIPTION,
                 UID,
                 CATEGORIES,
+                DTSTARTZID,
                 CASE
                     WHEN DTSTART LIKE "%{date}%" AND DTEND LIKE "%{date}%" THEN 'sameday'
                     WHEN DTSTART LIKE "%{date}%" AND DTEND NOT LIKE "%{date}%" THEN 'startonday'
@@ -223,51 +242,24 @@ def check_termin_at_date(date):
         result=cur.fetchall()
         if result:
             for termin in result:
+                
                 DTSTART = termin[0]
                 DTEND = termin[1]
                 SUMMARY = termin[2][:25]
                 DESCRIPTION = termin[3][:30]
                 UID = termin[4]
                 cat = termin[5]
-                status_day = termin[6]
-
-                if cat in cat_farbcodes:
-                    farbecode = cat_farbcodes[cat]
-
-                if DTSTART == DTEND:
-                    DTSTART = 'Today'
-                    DTEND = ''
-
-                elif status_day == 'sameday':
-                    frag_zulu = format_zulutime(DTSTART, DTEND)
-                    if frag_zulu:
-                        DTSTART = frag_zulu[2] + ':' + frag_zulu[3]
-                        DTEND = frag_zulu[6] + ':' + frag_zulu[7]
-
-                elif status_day == 'startonday':
-                    frag_zulu = format_zulutime(DTSTART, DTEND)
-                    if frag_zulu:
-                        start_time = frag_zulu[10]
-                        end_time = frag_zulu[11]
-                        difference =  end_time - start_time
-                        multi_day_dic[UID] = difference.days - 1
-
-                        DTSTART = frag_zulu[2] + ':' + frag_zulu[3]
-                        DTEND = frag_zulu[5] + '.' + frag_zulu[4] + ' ' + frag_zulu[6] + ':' + frag_zulu[7]
-
-                elif status_day == 'endonday':
-                    frag_zulu = format_zulutime(DTSTART, DTEND)
-                    if frag_zulu:
-                        DTSTART = frag_zulu[1] + '.' + frag_zulu[0] + ' ' + frag_zulu[2] + ':' + frag_zulu[3]
-                        DTEND = frag_zulu[6] + ':' + frag_zulu[7]
-
-                string_to_insert += f"""<div class="night">  <a href="caldit://goto_termin?UID={UID}" onclick="setTimeout(function(){{ window.location.href='page2.html'; }}, 1000); return true;"><span style="color:#41A338;">{DTSTART}</span>-<span style="color:#F67C30;">{DTEND}</span><span style="color:{farbecode};"> {SUMMARY} {DESCRIPTION} </span></a></div>"""
-
-        return(string_to_insert)
+                DTSTARTZID = termin[6]
+                status_day = termin[7]
+                if date not in all_termins:
+                    all_termins[date] = []
+                DTSTARTs = parse_datetime(DTSTART, DTSTARTZID)
+                DTENDs = parse_datetime(DTEND, DTSTARTZID)
+                all_termins[date].append([UID, DTSTARTs, DTENDs, SUMMARY, DESCRIPTION, cat, status_day, date])
 #check_termin_at_date('20240110')
 
 def insert_termin(UID, DTSTAMP=None, CREATED=None, LASTMODIFIED=None, DTSTARTZID=None, DTSTART=None,
-         DTENDZID=None, DTEND=None, SUMMARY=None, DESCRIPTION=None, LOCATION=None, GEO=None,
+         DTEND=None, SUMMARY=None, DESCRIPTION=None, LOCATION=None, GEO=None,
          ORGANIZER=None, ATTENDEE=None, URL=None, STATUS=None, VALARM=None,
          RRULE=None, RRULEND=None, RRULEXTRA=None, CLASS=None, TRANSP=None, PRIORITY=None, CATEGORIES=None,
          ATTACH=None, ATTACH2=None, TMP=None):
@@ -276,27 +268,23 @@ def insert_termin(UID, DTSTAMP=None, CREATED=None, LASTMODIFIED=None, DTSTARTZID
         insert_into_table = (
             '"{}", "{}", "{}", "{}", "{}", "{}", "{}", "{}", "{}", "{}", '
             '"{}", "{}", "{}", "{}", "{}", "{}", "{}", "{}", "{}", "{}", '
-            '"{}", "{}", "{}", "{}", "{}", "{}", "{}"'.format(
-                UID, DTSTAMP, CREATED, LASTMODIFIED, DTSTARTZID, DTSTART,
-                DTENDZID, DTEND, SUMMARY,
+            '"{}", "{}", "{}", "{}", "{}", "{}"'.format(
+                UID, DTSTAMP, CREATED, LASTMODIFIED, DTSTARTZID, DTSTART, DTEND, SUMMARY,
                 DESCRIPTION, LOCATION, GEO, ORGANIZER, ATTENDEE, URL, STATUS,
                 VALARM, RRULE, RRULEND, RRULEXTRA, CLASS, TRANSP, PRIORITY, CATEGORIES, ATTACH,
                 ATTACH2, TMP
             )
         )
-
         sql_prompt = (
             "INSERT OR REPLACE INTO termine ("
-            "UID, DTSTAMP, CREATED, LASTMODIFIED, DTSTARTZID, DTSTART, DTENDZID, DTEND, SUMMARY, DESCRIPTION, "
+            "UID, DTSTAMP, CREATED, LASTMODIFIED, DTSTARTZID, DTSTART, DTEND, SUMMARY, DESCRIPTION, "
             "LOCATION, GEO, ORGANIZER, ATTENDEE, URL, STATUS, VALARM, RRULE, RRULEND, RRULEXTRA, CLASS, "
             "TRANSP, PRIORITY, CATEGORIES, ATTACH, ATTACH2, TMP"
             ") VALUES ({});".format(insert_into_table)
         )
-
         cur.execute(sql_prompt)
 
 def sql_dump():
-
     cur = con.cursor()
     cur.execute("SELECT * FROM termine ORDER BY DTSTART ASC")
     rows = cur.fetchall()
@@ -318,7 +306,7 @@ def sql_dump():
     return html
 
 def create_single_site(UID, DTSTAMP=None, CREATED=None, LASTMODIFIED=None, DTSTARTZID=None, DTSTART=None,
-         DTENDZID=None, DTEND=None, SUMMARY=None, DESCRIPTION=None, LOCATION=None, GEO=None,
+         DTEND=None, SUMMARY=None, DESCRIPTION=None, LOCATION=None, GEO=None,
          ORGANIZER=None, ATTENDEE=None, URL=None, STATUS=None, VALARM=None,
          RRULE=None, RRULEND=None, RRULEXTRA=None, CLASS=None, TRANSP=None, PRIORITY=None, CATEGORIES=None,
          ATTACH=None, ATTACH2=None, TMP=None):
@@ -408,24 +396,23 @@ th {
   <div class="grid-container first-two-rows">
     <div class="description">LASTMODIFIED</div>
     <div class="description">CATEGORIES</div>
-    <div class="description">ORGANIZER</div>
+    <div class="description">CREATED</div>
     <input type="text" id="LASTMODIFIED" name="LASTMODIFIED" placeholder="LASTMODIFIED" value="{ LASTMODIFIED if LASTMODIFIED else '' }">
     <input type="text" id="CATEGORIES" name="CATEGORIES" placeholder="CATEGORIES" value="{ CATEGORIES if CATEGORIES else '' }">
+    <input type="text" id="CREATED" name="CREATED" placeholder="CREATED" value="{ CREATED if CREATED else '' }">
+    <div class="description">ORGANIZER</div>
+    <div class="description">ATTENDEE</div>
+    <div class="description">ATTACH</div>
     <input type="text" id="ORGANIZER" name="ORGANIZER" placeholder="ORGANIZER" value="{ ORGANIZER if ORGANIZER else '' }">
+    <input type="text" id="ATTENDEE" name="ATTENDEE" placeholder="ATTENDEE" value="{ ATTENDEE if ATTENDEE else '' }">
+    <input type="text" id="ATTACH" name="ATTACH" placeholder="https://example.com/dokument.pdf" value="{ ATTACH if ATTACH else '' }">
     <div class="description">DTSTART</div>
     <div class="description">DTEND</div>
-    <div class="description">ATTENDEE</div>
+    <div class="description">TZID</div>
     <input type="text" id="DTSTART" name="DTSTART" placeholder="DTSTART" value="{ DTSTART if DTSTART else '' }">
     <input type="text" id="DTEND" name="DTEND" placeholder="DTEND" value="{ DTEND if DTEND else '' }">
-    <input type="text" id="ATTENDEE" name="ATTENDEE" placeholder="ATTENDEE" value="{ ATTENDEE if ATTENDEE else '' }">
-    <div class="description">DTSTARTZID</div>
-    <div class="description">DTENDZID</div>
-    <div class="description">ATTACH</div>
-    <input type="text" id="DTSTARTZID" name="DTSTARTZID" placeholder="Europe/Paris  VALUE=DATE:20240101  VALUE=DATE-TIME:20240101T090000" value="{ DTSTARTZID if DTSTARTZID else 'Europe/Paris' }">
-    <input type="text" id="DTENDZID" name="DTENDZID" placeholder="Europe/Paris  VALUE=DATE:20240101  VALUE=DATE-TIME:20240101T090000" value="{ DTENDZID if DTENDZID else 'Europe/Paris' }">
-    <input type="text" id="ATTACH" name="ATTACH" placeholder="https://example.com/dokument.pdf" value="{ ATTACH if ATTACH else '' }">
+    <input type="text" id="DTSTARTZID" name="DTSTARTZID" placeholder="Africa/Cairo" value="{ DTSTARTZID if DTSTARTZID else 'Europe/Paris' }">
   </div>
-
   <div class="grid-container next-two-a">
     <div class="description">SUMMARY</div>
     <input type="text" id="SUMMARY" name="SUMMARY" placeholder="SUMMARY" value="{ SUMMARY if SUMMARY else '' }">
@@ -434,7 +421,6 @@ th {
     <div class="description">DESCRIPTION</div>
     <textarea id="DESCRIPTION" name="DESCRIPTION" placeholder="DESCRIPTION">{ DESCRIPTION if DESCRIPTION else '' }</textarea>
   </div>
-
   <div class="grid-container first-two-rows">
     <div class="description">LOCATION</div>
     <div class="description">GEO</div>
@@ -443,11 +429,11 @@ th {
     <input type="text" id="GEO" name="GEO" placeholder="29.9753;31.1376" value="{ GEO if GEO else '' }">
     <input type="text" id="URL" name="URL" placeholder="URL" value="{ URL if URL else '' }">
     <div class="description">UID</div>
-    <div class="description">CREATED</div>
     <div class="description">DTSTAMP</div>
+    <div class="description">TRANSP</div>
     <input type="text" id="UID" name="UID" placeholder="UID" value="{ UID if UID else '' }">
-    <input type="text" id="CREATED" name="CREATED" placeholder="CREATED" value="{ CREATED if CREATED else '' }">
     <input type="text" id="DTSTAMP" name="DTSTAMP" placeholder="DTSTAMP" value="{ DTSTAMP if DTSTAMP else '' }">
+    <input type="text" id="TRANSP" name="TRANSP" placeholder="OPAQUE" value="{ TRANSP if TRANSP else '' }">
     <div class="description">PRIORITY</div>
     <div class="description">STATUS</div>
     <div class="description">VALARM</div>
@@ -461,12 +447,10 @@ th {
     <input type="text" id="RRULEND" name="RRULEND" placeholder="UNTIL=19971224T000000 INTERVAL=2 ;COUNT=10" value="{ RRULEND if RRULEND else '' }">
     <input type="text" id="RRULEXTRA" name="RRULEXTRA" placeholder="WKST=SU; BYDAY=TU,TH BYMONTHDAY=2,15 BYMONTH=6,7 BYHOUR=9,10,11,12," value="{ RRULEXTRA if RRULEXTRA else '' }">
     <div class="description">CLASS</div>
-    <div class="description">TRANSP</div>
     <div class="description">ATTACH2</div>
-    <input type="text" id="CLASS" name="CLASS" placeholder="CLASS" value="{ CLASS if CLASS else '' }">
-    <input type="text" id="TRANSP" name="TRANSP" placeholder="OPAQUE" value="{ TRANSP if TRANSP else '' }">
-    <input type="text" id="ATTACH2" name="ATTACH2" placeholder="ATTACH2" value="{ ATTACH2 if ATTACH2 else '' }">
     <div class="description">TMP</div>
+    <input type="text" id="CLASS" name="CLASS" placeholder="CLASS" value="{ CLASS if CLASS else '' }">
+    <input type="text" id="ATTACH2" name="ATTACH2" placeholder="ATTACH2" value="{ ATTACH2 if ATTACH2 else '' }">
     <input type="text" id="TMP" name="TMP" placeholder="TMP" value="{ TMP if TMP else '' }">
   </div>
   <div class="grid-container buttons">
@@ -510,7 +494,6 @@ function senden() {
     var LASTMODIFIED = document.getElementById('LASTMODIFIED').value;
     var DTSTARTZID = document.getElementById('DTSTARTZID').value;
     var DTSTART = document.getElementById('DTSTART').value;
-    var DTENDZID = document.getElementById('DTENDZID').value;
     var DTEND = document.getElementById('DTEND').value;
     var SUMMARY = document.getElementById('SUMMARY').value;
     var DESCRIPTION = document.getElementById('DESCRIPTION').value;
@@ -539,7 +522,6 @@ function senden() {
               "&LASTMODIFIED=" + encodeURIComponent(LASTMODIFIED) +
               "&DTSTARTZID=" + encodeURIComponent(DTSTARTZID) +
               "&DTSTART=" + encodeURIComponent(DTSTART) +
-              "&DTENDZID=" + encodeURIComponent(DTENDZID) +
               "&DTEND=" + encodeURIComponent(DTEND) +
               "&SUMMARY=" + encodeURIComponent(SUMMARY) +
               "&DESCRIPTION=" + encodeURIComponent(DESCRIPTION) +
@@ -566,7 +548,6 @@ function senden() {
 </script>
 </body>
 </html>
-
 """
     file_path = dbasepath + 'page2.html'
     with open(file_path, 'w') as file:
@@ -596,40 +577,42 @@ def rr_freq(m, y):
         uids_in_result1 = {uid[0] for uid in result1}
 
         cur = con.cursor()
-        cur.execute(f'SELECT UID, DTSTART, RRULE, RRULEND, RRULEXTRA, CATEGORIES FROM termine WHERE RRULE IS NOT NULL AND RRULE != "" AND RRULE != "None";')
+        cur.execute(f'SELECT UID, DTSTART, RRULE, RRULEND, RRULEXTRA, CATEGORIES, DTSTARTZID FROM termine WHERE RRULE IS NOT NULL AND RRULE != "" AND RRULE != "None";')
         result = cur.fetchall()
         if result:
-            datum_1_jan = datetime(y, 1, 1)
-            datum_31_dez = datetime(y, 12, 31)
+            datum_1_jan = datetime(y, 1, 1).astimezone()
+            datum_31_dez = datetime(y, 12, 31).astimezone()
             for termin in result:
                 if termin[0] not in uids_in_result1:
+                    if verbose > 2: logging.info("in rr result 2 insert found AND termin[0] not in uids_in_result1: ")
                     try:
+
                         DIC_TERMIN = {}
-                        UID = termin[0] 
+                        UID = termin[0]
                         DTSTARTR = termin[1]
-                        ics_rule = "RRULE:" + termin[2] 
+                        ics_rule = "RRULE:" + termin[2]
                         RRULEND = termin[3]
                         RRULEXTRA = termin[4]
+                        DTSTARTZID = termin[6]
                         UNTIL = ''
-                        date_obj_start = parse_datetime(DTSTARTR)
+                        date_obj_start = parse_datetime(DTSTARTR, DTSTARTZID)
                         if date_obj_start < datum_31_dez:
                             if RRULEND not in ["None", "", None]:
                                 ics_rule += ';' + RRULEND
                             if RRULEXTRA not in ["None", "", None]:
                                 ics_rule +=  ';' + RRULEXTRA
 
-#                    ics_rule = "RRULE:FREQ=DAILY;UNTIL=20240207T223344"   mahmmal Z mit  datetime(2024, 1, 4, tzinfo=timezone.utc)
                             has_until = 'UNTIL=' in ics_rule
-                            if has_until:
+
+                            if 'UNTIL=' in ics_rule:
                                 parts = ics_rule.split('UNTIL=')
                                 UNTIL = parts[1]
                                 temp = ''
                                 if len(parts) > 2:
                                     UNTIL = parts[1].split(';')[0]
                                     temp  = parts[2]
-                                if UNTIL.endswith('Z'):
-                                    UNTIL = UNTIL[:-1]
-
+                                if not DTSTARTR.endswith('Z'):
+                                     UNTIL = UNTIL + 'Z'
                                 ics_rule = parts[0] + 'UNTIL=' + UNTIL + temp
 
                                 rrule_obj = rrulestr(ics_rule, dtstart=date_obj_start)
@@ -660,6 +643,7 @@ def rr_freq(m, y):
                             if not has_count and not has_until:
                                 occurrences = list(rrule_obj)
                                 for occ in occurrences:
+                                    if verbose > 2: logging.info("in rr forever occ compt")
                                     if datum_1_jan <= occ <= datum_31_dez:
                                         if UID not in DIC_TERMIN:
                                             DIC_TERMIN[UID] = []
@@ -706,30 +690,222 @@ def rr_freq(m, y):
         else:
             return 0
 
-def create_body(m, y):
+def create_body2(m, y, mode='none', kw=1):
     scan_von, scan_bis = calc_month_range(y, m)
-    scan_room = [scan_von + timedelta(days=i) for i in range((scan_bis - scan_von).days + 1)]
     html_days = []
-    UID = 'UIDcalldit' + scan_time
-    for day in scan_room:
+    UID2 = 'UIDcalldit' + scan_time
+    tage_differenz = (scan_bis - scan_von).days
+    teest = kw
+    if mode == 'Week':
+        first_day_of_year = datetime(y, 1, 1)
+        first_monday = first_day_of_year + timedelta(days=(7-first_day_of_year.weekday()) % 7)
+        scan_von = first_monday + timedelta(weeks=kw-1)
+#        html_days.append(f"""<div style="display: flex; grid-column: span 7;">KW: <input type="text" id="kw" name="kw" value="{kw}" style="font-size: 16px; flex-grow: 1;">""")
+        html_days.append(f"""<div style="display: flex; grid-column: span 2;"><input type="text" id="kw" name="kw" value="{kw}" style="font-size: 16px;">""")
+        html_days.append("""<input type="button" value="KW" onclick="senden_kw(); setTimeout(function() { window.location.href='month.html'; }, 2000); return true;"></div>
+<script>
+function senden_kw() {
+    var datum = document.getElementById('datum').value;
+    var kw = document.getElementById('kw').value;
+    var url = "caldit://refresh_site?" +
+              "datum=" + encodeURIComponent(datum) +
+              "&go=" + 'gokw' +
+              "&kw=" + encodeURIComponent(kw) ;
+    window.open(url, '_self');
+}
+</script>""")
+
+        days_range = range(7)
+    else:
+        days_range = range(tage_differenz + 1)
+
+    html_days.append(f'<div class="calendar"><div class="header">Mo</div><div class="header">Di</div><div class="header">Mi</div><div class="header">Do</div><div class="header">Fr</div><div class="header">Sa</div><div class="header">So</div> ')
+    for i in days_range:
+        day = scan_von + timedelta(days=i)
         day_t = day.day
-
         day_YYYYMMDD = day.strftime('%Y%m%d')
-        UID = 'UIDcalldit' + scan_time
         termin = check_termin_at_date(day_YYYYMMDD)
+        string_to_insert = ''
 
+        if day_YYYYMMDD in all_termins:
+            all_termins[day_YYYYMMDD] = sorted(all_termins[day_YYYYMMDD], key=lambda item: item[1])
+
+            for termina in all_termins[day_YYYYMMDD]:
+                SUMMARY  = ''
+                DESCRIPTION = ''
+                DTSTART = ''
+                DTEND = ''
+                cat = ''
+                UID = termina[0]
+                DTSTART = termina[1]
+                DTEND = termina[2]
+                SUMMARY = termina[3][:15]
+                DESCRIPTION = termina[4][:15]
+                cat = termina[5]
+                status_day = termina[6]
+                farbcode = '#E8E8E8'
+
+                if cat in cat_farbcodes:
+                    farbcode = cat_farbcodes[cat]
+
+                if DTSTART == DTEND:
+                    DTSTART = 'Today'
+                    DTEND = ''
+
+                elif status_day == 'sameday':
+                    DTSTART = f'{DTSTART.hour:02d}:{DTSTART.minute:02d}'
+                    DTEND = f'{DTEND.hour:02d}:{DTEND.minute:02d}'
+
+                elif status_day == 'startonday':
+                    start_time = DTSTART
+                    end_time = DTEND
+                    difference =  end_time - start_time
+                    multi_day_dic[UID] = difference.days - 1
+
+                    DTSTART = f'{DTSTART.hour:02d}:{DTSTART.minute:02d}'
+                    DTEND = f'{DTEND.day:02d}.{DTEND.month:02d} {DTEND.hour:02d}:{DTEND.minute:02d}'
+
+                elif status_day == 'endonday':
+                    DTSTART = f'{DTSTART.day:02d}.{DTSTART.month:02d} {DTSTART.hour:02d}:{DTSTART.minute:02d}'
+                    DTEND = f'{DTEND.hour:02d}:{DTEND.minute:02d}'
+
+                elif status_day == 'RR':
+                    DTSTART = f'{DTSTART.hour:02d}:{DTSTART.minute:02d}'
+                    DTEND = f'{DTEND.hour:02d}:{DTEND.minute:02d}'
+
+                string_to_insert += f"""<div class="night">  <a href="caldit://goto_termin?UID={UID}" onclick="setTimeout(function(){{ window.location.href='page2.html'; }}, 1000); return true;"><span style="color:#41A338;">{DTSTART}</span>-<span style="color:#F67C30;">{DTEND}</span><br><span style="color:{farbcode};">{SUMMARY}<br>{DESCRIPTION}</span></a></div>"""
+
+        day_class = "day"
+
+        if str(day_t) + str(m) == str(int(time.strftime("%d"))) + str(int(time.strftime("%m"))):
+            day_class = '"day" style="background: #696969;"'
         farbcode = '#E8E8E8'
-        if day.month != m:
+        if day.month != m and mode != 'Week':
             farbcode = '#C45137'
 
-        day_html =  f""" <div class=day> <a href="caldit://entry_termin?UID={UID}&DTSTART={day_YYYYMMDD + "T001122"}&CREATED={day_YYYYMMDD}&DTEND={day_YYYYMMDD + "T223344"}" onclick="setTimeout(function(){{ window.location.href='page2.html'; }}, 1000); return true;"><span style="color: {farbcode};">{day_t} </span></a> {termin} </div>"""
-
+        day_html =  f""" <div class={day_class}> <a href="caldit://entry_termin?UID={UID2}&DTSTART={day_YYYYMMDD + "T001122"}&CREATED={day_YYYYMMDD}&DTEND={day_YYYYMMDD + "T223344"}" onclick="setTimeout(function(){{ window.location.href='page2.html'; }}, 1000); return true;"><span style="color: {farbcode};">{day_t} </span></a> {string_to_insert} </div>"""
         html_days.append(day_html)
 
     html_days_str = "\n".join(html_days)
     return html_days_str
 
-def create_month(m, y):
+def create_body(m, y):
+    wochentag_mapping = {
+        'Mon': 'Mo',
+        'Tue': 'Di',
+        'Wed': 'Mi',
+        'Thu': 'Do',
+        'Fri': 'Fr',
+        'Sat': 'Sa',
+        'Sun': 'So'
+    }
+
+    html_days = []
+    UID2 = 'UIDcalldit' + scan_time
+    startday, num_days = calendar.monthrange(y, m)
+    month_name = calendar.month_name[m]
+    html_grid = f"""
+    <div style='display: grid; grid-template-columns: repeat({1}, 1fr);'><span style="text-align: center;">{month_name}</span> </div>
+    <div style='display: grid; grid-template-columns: repeat({num_days}, 1fr);'>
+"""
+    html_days.append(html_grid)
+    for day in range(1, num_days + 1):
+        wochentag_abkuerzung = calendar.day_abbr[startday]
+        if wochentag_abkuerzung == 'Tue' or 'Wed' or 'Thu' or 'Sun':
+            wochentag_abkuerzung = wochentag_mapping[wochentag_abkuerzung]
+        day_YYYYMMDD = f'{y}{m:02d}{day:02d}'
+        termin = check_termin_at_date(day_YYYYMMDD)
+        string_to_insert = ''
+        startday += 1
+        if startday == 7:
+            startday = 0
+#        count_termins = 0
+        if day_YYYYMMDD in all_termins:
+            all_termins[day_YYYYMMDD] = sorted(all_termins[day_YYYYMMDD], key=lambda item: item[1])
+
+            for termina in all_termins[day_YYYYMMDD]:
+#                count_termins += 1
+#                if count_termins > 5:
+#                    break
+                SUMMARY  = ''
+                DESCRIPTION = ''
+                DTSTART = ''
+                DTEND = ''
+                cat = ''
+                UID = termina[0]
+                DTSTART = termina[1]
+                DTEND = termina[2]
+                SUMMARY = termina[3][:10]
+                DESCRIPTION = termina[4][:10]
+                cat = termina[5]
+                status_day = termina[6]
+                farbcode = '#E8E8E8'
+
+                if cat in cat_farbcodes:
+                    farbcode = cat_farbcodes[cat]
+
+                if DTSTART == DTEND:
+                    DTSTART = 'Today'
+                    DTEND = ''
+
+                elif status_day == 'sameday':
+                    DTSTART = f'{DTSTART.hour:02d}:{DTSTART.minute:02d}'
+                    DTEND = f'{DTEND.hour:02d}:{DTEND.minute:02d}'
+
+                elif status_day == 'startonday':
+                    start_time = DTSTART
+                    end_time = DTEND
+                    difference =  end_time - start_time
+                    multi_day_dic[UID] = difference.days - 1
+
+                    DTSTART = f'{DTSTART.hour:02d}:{DTSTART.minute:02d}'
+                    DTEND = f'{DTEND.day:02d}.{DTEND.month:02d} {DTEND.hour:02d}:{DTEND.minute:02d}'
+
+                elif status_day == 'endonday':
+                    DTSTART = f'{DTSTART.day:02d}.{DTSTART.month:02d} {DTSTART.hour:02d}:{DTSTART.minute:02d}'
+                    DTEND = f'{DTEND.hour:02d}:{DTEND.minute:02d}'
+
+                elif status_day == 'RR':
+                    DTSTART = f'{DTSTART.hour:02d}:{DTSTART.minute:02d}'
+                    DTEND = f'{DTEND.hour:02d}:{DTEND.minute:02d}'
+#<br>{DESCRIPTION}
+                string_to_insert += f"""<div class="night_year">  <a href="caldit://goto_termin?UID={UID}" onclick="setTimeout(function(){{ window.location.href='page2.html'; }}, 1000); return true;"><span style="color:#41A338;">{DTSTART}</span>-<span style="color:#F67C30;">{DTEND}</span><br><span style="color:{farbcode};">{SUMMARY}</span></a></div>"""
+
+        day_class = "day"
+        farbcode = '#E8E8E8'
+        if wochentag_abkuerzung == 'Sa' or wochentag_abkuerzung == 'So':
+            farbcode = '#C45137'
+
+        day_html =  f""" <div class=day> <a href="caldit://entry_termin?UID={UID2}&DTSTART={day_YYYYMMDD + "T001122"}&CREATED={day_YYYYMMDD}&DTEND={day_YYYYMMDD + "T223344"}" onclick="setTimeout(function(){{ window.location.href='page2.html'; }}, 1000); return true;"><span style="color: {farbcode};">{day} {wochentag_abkuerzung}</span></a>{string_to_insert}</div>"""
+        html_days.append(day_html)
+
+    html_days.append('</div>')
+    html_days_str = "\n".join(html_days)
+    return html_days_str
+
+def create_year(y):
+    ppp = ''
+    for i in range(1, 13):
+        ppp += create_body(i, y)
+    return ppp
+
+def create_month(m, y, mode='Month', kw=0):
+    modee = mode
+    navigate_go_left = 'go_left'
+    navigate_go_right = 'go_right'
+    navigate_go_Week = 'Week'
+    if modee == 'Month':
+        modee = 'Year'
+    elif modee == 'Year':
+        modee = 'Month'
+        navigate_go_left = 'go_left_year'
+        navigate_go_right = 'go_right_year'
+    elif modee == 'Week':
+        modee = 'Month'
+        navigate_go_left = 'go_left_week'
+        navigate_go_right = 'go_right_week'
+        navigate_go_Week = 'Year'
+
     monat = m
     year = y
     head = """
@@ -766,6 +942,13 @@ def create_month(m, y):
     grid-row: span 3;
     border-color: #696969;
 }
+.night_year {
+    border: 1px solid #ddd;
+    text-align: left;
+    padding: 0px;
+    border-color: #696969;
+    font-size: 9px;
+}
 a {
   text-decoration: none;
 }
@@ -789,28 +972,40 @@ input[type="button"] {
     grid-template-columns: repeat(9, 1fr);
     margin: 1px;
 }
+.year {
+    display: grid;
+    grid-template-columns: repeat(31, 1fr);
+    margin: 1px;
+}
 </style>
 </head>
 <body>
-
 <form id="meinFormular2" class="lineone">
-<input type="button" value="&larr;" onclick="senden_ref('go_left'); setTimeout(function() { window.location.href='month.html'; }, 1000); return true;">
+<input type="button" value="&larr;" onclick="senden_ref(\'%s\'); setTimeout(function() { window.location.href='month.html'; }, 2000); return true;">
 <input type="text" id="datum" name="datum" value="%s" style="text-align: center; font-size: 18px;">
 <input type="button" value="Refresh" onclick="senden_ref('no'); setTimeout(function() { window.location.href='month.html'; }, 1000); return true;">
-<input type="text" id="meineDatei" name="meineDatei" value="/home/debian/fullp.ics"> 
-<input type="button" value="Import" onclick="import_ics(); setTimeout(function() { window.location.href='month.html'; }, 1000); return true;"> 
-<input type="text" id="optins_ex_cat" name="optins_ex_cat" value="CATEGORIES:birthday"> 
-<input type="button" value="Export filter" onclick="export_ics('cat'); setTimeout(function() { window.location.href='month.html'; }, 1000); return true;">
-<input type="button" value="Export All" onclick="export_ics('all'); setTimeout(function() { window.location.href='month.html'; }, 4000); return true;"> 
-<input type="button" value="&rarr;" onclick="senden_ref('go_right'); setTimeout(function() { window.location.href='month.html'; }, 1000); return true;">
+<input type="button" value="%s" onclick="senden_ref(\'%s\'); setTimeout(function() { window.location.href='month.html'; }, 3000); return true;"> 
+<input type="button" value="%s" onclick="senden_ref(\'%s\'); setTimeout(function() { window.location.href='month.html'; }, 3000); return true;"> 
+<input type="text" id="optins_ex_cat" name="optins_ex_cat"  placeholder="CATEGORIES:birthday" value="/home/debian/combobox.ics"> 
+<div style="display: flex; grid-column: span 2;">
+<input type="button" value="Import" style="flex-grow: 1;" onclick="import_ics(); setTimeout(function() { window.location.href='month.html'; }, 1000); return true;"> 
+<input type="button" value="Export filter" style="flex-grow: 1;" onclick="export_ics('cat'); setTimeout(function() { window.location.href='month.html'; }, 1000); return true;">
+<input type="button" value="Export All" style="flex-grow: 1;" onclick="export_ics('all'); setTimeout(function() { window.location.href='month.html'; }, 4000); return true;"> 
+</div>
+<div style="display: grid; grid-template-columns: span 1;">
+<input type="button" value="&rarr;" onclick="senden_ref(\'%s\'); setTimeout(function() { window.location.href='month.html'; }, 2000); return true;">
+</div>
 </form>
-
 <script>
 function senden_ref(input) {
     var datum = document.getElementById('datum').value;
+    var test = \'%s\'
+    var mode = \'%s\'
     var url = "caldit://refresh_site?" +
               "datum=" + encodeURIComponent(datum) +
-              "&go=" + encodeURIComponent(input);
+              "&go=" + encodeURIComponent(input) +
+              "&kw=" + test +
+              "&mode=" + mode;
     window.open(url, '_self');
 }
 </script>
@@ -825,27 +1020,20 @@ function export_ics(input) {
 </script>
 <script>
 function import_ics() {
-    var meineDatei = document.getElementById('meineDatei').value;
+    var optins_ex_cat = document.getElementById('optins_ex_cat').value;
     var url = "caldit://import_ics?" +
-              "meineDatei=" + encodeURIComponent(meineDatei);
+              "optins_ex_cat=" + encodeURIComponent(optins_ex_cat);
     window.open(url, '_self');
 }
 </script>
-
-<div class="calendar">
-    <!-- Wochentagsköpfe -->
-    <div class="header">Mo</div>
-    <div class="header">Di</div>
-    <div class="header">Mi</div>
-    <div class="header">Do</div>
-    <div class="header">Fr</div>
-    <div class="header">Sa</div>
-    <div class="header">So</div>
-""" % (str(monat) + '.' + str(year))
-#    body_insert = eee1(monat, year)
-    body_insert = create_body(monat, year)
+""" % (navigate_go_left, str(monat) + '.' + str(year), modee, modee, navigate_go_Week, navigate_go_Week, navigate_go_right, str(kw), mode)
+    if mode == 'Year':
+        body_insert = create_year(year)
+    elif mode == 'Week':
+        body_insert = create_body2(monat, year, mode, kw)
+    else:
+        body_insert = create_body2(monat, year)
     tail = """
-
 </div>
 </body>
 </html>
@@ -861,7 +1049,6 @@ def read_cal_file(file_path):
     event_end = "END:VEVENT"
     valarm_start = "BEGIN:VALARM"
     valarm_end = "END:VALARM"
-
     termine = []
     current_event = None
     inside_valarm = False
@@ -892,7 +1079,7 @@ def read_cal_file(file_path):
     return termine
 
 def read_and_insert_ics_file(ics_file_path):
-    valid_entries = ["UID", "DTSTAMP", "CREATED", "LASTMODIFIED", "DTSTARTZID", "DTSTART", "DTENDZID", "DTEND", "SUMMARY", "DESCRIPTION", "LOCATION", "GEO", "ORGANIZER", "ATTENDEE", "URL", "STATUS", "VALARM", "RRULE", "RRULEND", "RRULEXTRA", "CLASS", "TRANSP", "PRIORITY", "CATEGORIES", "ATTACH", "ATTACH2"]
+    valid_entries = ["UID", "DTSTAMP", "CREATED", "LASTMODIFIED", "DTSTARTZID", "DTSTART", "DTEND", "SUMMARY", "DESCRIPTION", "LOCATION", "GEO", "ORGANIZER", "ATTENDEE", "URL", "STATUS", "VALARM", "RRULE", "RRULEND", "RRULEXTRA", "CLASS", "TRANSP", "PRIORITY", "CATEGORIES", "ATTACH", "ATTACH2"]
 
     termine = read_cal_file(ics_file_path)
     for termin in termine:
@@ -910,19 +1097,16 @@ def read_and_insert_ics_file(ics_file_path):
                 current_termin['DTSTARTZID'] = tzid
                 current_termin['DTSTART'] = value
 
-
             elif key == 'DTSTART':
                 current_termin['DTSTART'] = value
                 current_termin['DTSTARTZID'] = None
 
             elif key.startswith('DTEND;'):
                 _, tzid = key.split(';', 1)
-                current_termin['DTENDZID'] = tzid
                 current_termin['DTEND'] = value
 
             elif key == 'DTEND':
                 current_termin['DTEND'] = value
-                current_termin['DTENDZID'] = None
 
             elif key == 'RRULE':
                 parts = value.split(';', 2)
@@ -975,15 +1159,16 @@ def export_to_ics_file(mode, UID=None):
             second_arg = '*'
 
     with open(file_path, 'w') as file:
-        head = """BEGIN:VCALENDAR
+        head = f"""BEGIN:VCALENDAR
 VERSION:2.0
-PRODID:-//This is Sparta//Caldit//DE
+PRODID:-//ThisisSparta//Caldit//DE
 
+NAME:Caldit
+X-WR-CALNAME:Caldit
 CALSCALE:GREGORIAN
 METHOD:PUBLISH
-X-WR-CALNAME:Caldat
 BEGIN:VTIMEZONE
-TZID:Europe/Berlin
+TZID:{local_time_zone}
 BEGIN:STANDARD
 DTSTART:20201025T030000
 RRULE:FREQ=YEARLY;BYMONTH=10;BYDAY=-1SU
@@ -1015,7 +1200,6 @@ END:VTIMEZONE
             if mode != 'all' and mode != 'single':
                 cur.execute(f'SELECT * FROM termine where {first_arg}="{second_arg}"')
             result = cur.fetchall()
-
             if result:
                 for termin in result:
                     file.write("BEGIN:VEVENT\n")
@@ -1047,7 +1231,6 @@ END:VTIMEZONE
 def single_termin_as_dic(UID):
     with con:
         cur = con.cursor()
-
         cur.execute(f"PRAGMA table_info(termine);")
         table_columns_info = cur.fetchall()
 
@@ -1078,6 +1261,8 @@ def delete_termin(termin_uid):
 def parse_custom_url(url):
     parts = url.split('?')
     base = parts[0]
+    if os.name == 'nt':
+        base = base[:-1]
     params = parts[1] if len(parts) > 1 else ''
 
     param_dict = {}
@@ -1099,11 +1284,10 @@ def start():
             param_dict[key] = unquote(value)
 
         UID = param_dict.get('UID', '19841201')
-
         m = int(time.strftime("%m"))
         y = int(time.strftime("%Y"))
 
-        if verbose > 0: logging.info(f"started params dic = {param_dict}")
+        if verbose > 0: logging.info(f"started params dic = {param_dict}  base = {base}")
 
         if base == 'caldit://goto_termin':
             single_termin_dic = single_termin_as_dic(UID)
@@ -1149,27 +1333,53 @@ def start():
         elif base == 'caldit://refresh_site':
             go = param_dict.get('go', 'no')
             month_too_refresh = param_dict.get('datum', '11.2024')
+            today = datetime.now()
+            kw_now = today.isocalendar()[1] 
+            kw = int(param_dict.get('kw', kw_now))
             m = int(month_too_refresh.split('.')[0])
             y = int(month_too_refresh.split('.')[1])
+            mode = 'Month'
 
             if go == 'go_left':
                 m = m - 1
                 if m < 1:
                     m = 12
                     y = y - 1
-
             elif go == 'go_right':
                 m = m + 1
                 if m > 12:
                     m = 1
                     y = y + 1
 
+            elif go == 'gokw':
+                mode = 'Week'
+
+            elif go == 'Year':
+                mode = 'Year'
+            elif go == 'go_left_year':
+                y = y - 1
+                mode = 'Year'
+            elif go == 'go_right_year':
+                y = y + 1
+                mode = 'Year'
+
+            elif go == 'Week':
+                mode = 'Week'
+                kw = kw_now
+            elif go == 'go_right_week':
+                kw = kw + 1
+                mode = 'Week'
+            elif go == 'go_left_week':
+                kw = kw - 1
+                mode = 'Week'
+
             rr_freq(m, y)
-            create_month(m, y)
-            if verbose > 2: logging.info(f" caldit://refresh_site': create_month m {m} y {y}  ende  ")
+            if verbose > 2: logging.info(f" caldit://refresh_site': create_month m {m} y {y}  mode {mode} kw {kw}  END ")
+            create_month(m, y, mode, kw)
+
     else:
         if verbose > 2: logging.info("else : create_month started")
-        create_month(1,2024)
+        create_month(1,2024, 'Month')
 
 start()
 
@@ -1181,7 +1391,7 @@ start()
 #    DTSTAMP: wird jedes Mal aktualisiert, wenn die iCalendar-Instanz geändert wird         DTSTAMP:20230101T000000Z  2023:01: 06:  T: (Teil des ISO 8601-Standards).090000: Uhrzeit (09:00:00 Uhr)Z:"Zulu" Zeit, die Uhrzeit in UTC (Coordinated Universal Time) angegeben ist.
 #    CREATED:20230101T000000Z bleibt konstant , wann das Ereignis erstellt wurde.           CREATED:20230101T000000Z
 #LAST-MODIFIED:20230102T000000Z    wann das Ereignis zuletzt geändert wurde.
-#    DTSTART und DTEND: Start- und Enddatum des Ereignisses.                                DTSTART:20230106T090000Z  DTSTART;VALUE=DATE:20230106 DTEND;VALUE=DATE:20230106
+#    DTSTART und DTEND: Start- und Enddatum des Ereignisses.                                DTSTART:20230106T090000Z  DTSTART;VALUE=DATE:20230106 DTEND;VALUE=DATE:20230106    tzid...  VALUE=DATE:20240101  VALUE=DATE-TIME:20240101T090000
 #    SUMMARY: Der Titel oder die Zusammenfassung des Ereignisses.                           SUMMARY:Wöchentliches Meeting
 #    DESCRIPTION: Eine ausführlichere Beschreibung des Ereignisses.                         DESCRIPTION:Dies ist ein wöchentliches Planungstreffen. Bitte seien Sie pünkt
 #    LOCATION: Der Ort, an dem das Ereignis stattfindet.                                    LOCATION:Konferenzraum 3
